@@ -1,0 +1,9 @@
+# 忽略日志文件夹
+logs/
+
+# 忽略数据文件夹
+data/
+
+# 忽略 Python 缓存
+__pycache__/
+*.pyc
