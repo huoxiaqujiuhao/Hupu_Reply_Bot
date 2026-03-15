@@ -18,8 +18,6 @@ import json
 import time
 import random
 import re
-import sys
-import os
 import numpy as np
 from config import CONFIG, get_logger
 import memory_store
@@ -247,12 +245,7 @@ def classify_post(title: str, content: str, llm: OpenAI,
                 )
 
         system_prompt = (
-            "你是一个资深的社区运营专家。请完成两个任务：\n"
-            "1. 为该帖子分类。\n"
-            "2. 评估该帖子的【讨论潜力值】(1-10分)。\n"
-            "【高分标准】(7-10分)：有详细背景故事、存在强烈社会/情感矛盾、观点极具争议性。\n"
-            "【低分标准】(1-4分)：一句话吐槽、纯情绪发泄无细节、毫无争议的常识求助。\n"
-            " 假如和女性或男女之间的关系或美国有关话题，则一概10分。\n"
+            CONFIG["prompt_classify_system"]
             + filter_block
             + '\n必须只输出严格的 JSON：{"primary_category":"...","secondary_tag":"...","discussion_value":8}'
         )
@@ -308,9 +301,7 @@ def analyze_why_high_lights(comments: list[dict], llm: OpenAI) -> list[dict]:
         resp = llm.chat.completions.create(
             model=CONFIG["model"],
             messages=[
-                {"role": "system", "content":
-                    "分析每条评论为什么高赞（切中了什么矛盾/用了什么角度）。"
-                    '只输出JSON数组：[{"id":1,"why":"一句话"},...]'},
+                {"role": "system", "content": CONFIG["prompt_analyze_system"]},
                 {"role": "user", "content": batch},
             ],
             response_format={"type": "json_object"},
@@ -379,15 +370,7 @@ def rag_generate(
             + "\n".join(case_lines)
         )
 
-    system = (
-        "你是一个真实的、在虎扑混迹多年的资深用户。你现在就是在虎扑APP里刷到这个帖，随手点开评论区打字，完全忘了自己是AI。\n"
-        "【长度与节奏】不要每次都一样长！多用逗号、句号，或者不加标点，可以出现错别字，打乱断句节奏，不要像写作文一样工整。\n"
-        "【语气与立场（核心）】绝不能无脑嘲讽！你必须先观察『当前路人的评论风向』：\n"
-        " - 如果大家在同情安慰，你就跟风但可以有对比拉踩，嘲讽一个经常被拿来对立的对象。\n"
-        " - 如果大家在讽刺，你就顺着他们一起讽刺这个对象。\n"
-        "【禁忌】绝对禁止套话、列点式回复、说教、AI助手礼貌用语、和稀泥，一定要有鲜明观点。"
-        + memory_block
-    )
+    system = CONFIG["prompt_generate_system"] + memory_block
     user = (
         f"【帖子类别】{ai_tag}\n"
         f"【标题】{title}\n"

@@ -15,7 +15,6 @@ classifier.py — 质心相似度分类 + other 重聚类
 import sqlite3
 import json
 import numpy as np
-import os
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 from config import CONFIG, get_logger
@@ -315,17 +314,14 @@ def _name_new_clusters(
 
         samples_text = ""
         for j, idx in enumerate(top_idx):
-            _, title, content = rows[c_idx[idx]]
+            _, title, _ = rows[c_idx[idx]]
             samples_text += f"{j+1}. {title}\n"
 
         try:
             resp = llm.chat.completions.create(
                 model=CONFIG["model"],
                 messages=[
-                    {"role": "system", "content":
-                        "你是虎扑数据分析师。给这批帖子起一个分类名，"
-                        "格式：一级类-二级标签，各2-4个字，口语化，符合虎扑语境。"
-                        '只输出JSON：{"primary":"...","secondary":"..."}'},
+                    {"role": "system", "content": CONFIG["prompt_cluster_naming"]},
                     {"role": "user", "content":
                         f"这批帖子（共 {mask.sum()} 个）代表样本：\n{samples_text}"},
                 ],

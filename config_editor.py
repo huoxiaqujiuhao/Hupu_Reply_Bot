@@ -2,6 +2,7 @@
 config_editor.py — 参数可视化编辑器
 运行后自动打开 Edge 浏览器，所有修改保存至 data/config_overrides.json
 """
+import html as _html
 import json
 import os
 import subprocess
@@ -82,18 +83,18 @@ PARAM_META = {
     "analyze_temperature":   {"group": "RAG 参数", "label": "分析 LLM 温度", "desc": "分析高赞原因时的 LLM 温度", "type": "float"},
 
     # ─── 反思系统 ────────────────────────────
-    "memory_positive_threshold":  {"group": "反思系统", "label": "正样本点赞门槛", "desc": "BotComment 赞数 ≥ 此值触发正向反思，提炼成功经验", "type": "int"},
-    "memory_negative_threshold":  {"group": "反思系统", "label": "负样本点赞上限", "desc": "BotComment 赞数 ≤ 此值触发负向反思，分析失败原因", "type": "int"},
-    "reflect_cooldown_hours":     {"group": "反思系统", "label": "反思冷静期（小时）", "desc": "发出不足此小时的评论不参与反思（点赞还不稳定）", "type": "int"},
-    "memory_dedup_threshold":     {"group": "反思系统", "label": "记忆去重阈值（0~1）", "desc": "新规则与已有规则余弦相似度超过此值时强化而非新增", "type": "float"},
-    "memory_weight_boost":        {"group": "反思系统", "label": "记忆强化权重增量", "desc": "每次被强化时给已有规则增加多少权重", "type": "float"},
-    "memory_decay_factor":        {"group": "反思系统", "label": "记忆衰减系数", "desc": "每7天冷记忆权重乘以此系数，0.9=每周降10%", "type": "float"},
-    "memory_decay_min_weight":    {"group": "反思系统", "label": "记忆删除阈值", "desc": "权重低于此值的记忆将被删除", "type": "float"},
-    "memory_decay_protect_count": {"group": "反思系统", "label": "衰减豁免强化次数", "desc": "被强化超过此次数的记忆不参与衰减（稳定经验保留）", "type": "int"},
-    "memory_top_k_category":      {"group": "反思系统", "label": "同类别注入记忆数", "desc": "生成回复时从当前帖子同类别中检索几条记忆注入", "type": "int"},
-    "memory_top_k_global":        {"group": "反思系统", "label": "全局注入记忆数", "desc": "生成回复时从 global 类别额外检索几条记忆注入", "type": "int"},
-    "memory_top_k_filter":        {"group": "反思系统", "label": "筛帖规则注入数", "desc": "打分阶段注入几条历史死帖规则辅助判断", "type": "int"},
+    "memory_positive_threshold":  {"group": "反思系统", "label": "正样本点赞门槛", "desc": "BotComment 赞数 ≥ 此值存为正样本案例", "type": "int"},
+    "memory_negative_threshold":  {"group": "反思系统", "label": "负样本点赞上限", "desc": "BotComment 赞数 ≤ 此值存为负样本案例", "type": "int"},
+    "reflect_cooldown_hours":     {"group": "反思系统", "label": "案例收集冷静期（小时）", "desc": "发出不足此小时的评论不处理（点赞还不稳定）", "type": "int"},
+    "memory_top_k_cases":         {"group": "反思系统", "label": "注入成功案例数", "desc": "生成回复时检索几个最相似的正样本案例注入 Prompt", "type": "int"},
+    "memory_top_k_filter":        {"group": "反思系统", "label": "注入冷帖案例数", "desc": "打分阶段注入几个历史冷帖案例标题辅助判断", "type": "int"},
     "memory_content_max_chars":   {"group": "反思系统", "label": "ReplyContext 正文截断", "desc": "发帖时存储的帖子正文最多保存多少字", "type": "int"},
+
+    # ─── Prompt 模板 ────────────────────────────
+    "prompt_generate_system":  {"group": "Prompt 模板", "label": "回复生成：人设 + 风格规则", "desc": "rag_generate 的 system prompt 静态部分（成功案例自动追加在末尾）", "type": "textarea"},
+    "prompt_classify_system":  {"group": "Prompt 模板", "label": "帖子打分：评判标准", "desc": "classify_post 的评分准则（历史冷帖案例 + JSON格式要求自动追加）", "type": "textarea"},
+    "prompt_analyze_system":   {"group": "Prompt 模板", "label": "高赞分析：指令", "desc": "analyze_why_high_lights 的 system prompt（含JSON输出格式，请勿删除）", "type": "textarea"},
+    "prompt_cluster_naming":   {"group": "Prompt 模板", "label": "聚类命名：指令", "desc": "给 other 重聚类后的新分类命名（含JSON输出格式，请勿删除）", "type": "textarea"},
 
     # ─── 防封节奏 ────────────────────────────
     "typing_delay_ms":      {"group": "防封节奏", "label": "打字延迟（毫秒/字）", "desc": "模拟人工打字的每字间隔，越大越安全但越慢", "type": "int"},
@@ -101,7 +102,7 @@ PARAM_META = {
 }
 
 # 分组排序
-GROUP_ORDER = ["API 设置", "时间控制", "爬虫参数", "分类参数", "回复参数", "RAG 参数", "反思系统", "防封节奏"]
+GROUP_ORDER = ["API 设置", "时间控制", "爬虫参数", "分类参数", "回复参数", "RAG 参数", "反思系统", "Prompt 模板", "防封节奏"]
 
 
 # ══════════════════════════════════════════════
@@ -168,6 +169,16 @@ def index():
                   <td><input type="password" class="form-control form-control-sm param-input" id="{key}" name="{key}" value="{val}" data-type="str"></td>
                   <td class="text-muted small">{p["desc"]}</td>
                   <td class="text-muted small font-monospace">默认: {'*' * 8}</td>
+                </tr>'''
+            elif p["type"] == "textarea":
+                escaped = _html.escape(str(val))
+                rows += f'''
+                <tr>
+                  <td class="fw-semibold text-nowrap align-top pt-2">{p["label"]}</td>
+                  <td colspan="3">
+                    <textarea class="form-control form-control-sm param-input font-monospace" id="{key}" name="{key}" rows="7" data-type="str" style="white-space:pre;font-size:0.8rem">{escaped}</textarea>
+                    <div class="text-muted small mt-1">{p["desc"]}</div>
+                  </td>
                 </tr>'''
             else:
                 rows += f'''
