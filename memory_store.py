@@ -112,7 +112,7 @@ def add_memory(
                  weight, reinforced_count, evidence_likes, source_pid,
                  created_at, updated_at)
             VALUES (?, ?, ?, ?, 1.0, 1, ?, ?, ?, ?)
-        """, (_to_blob(vec), rule_text, category, rule_type,
+        """, (rule_text, _to_blob(vec), category, rule_type,
               evidence_likes, source_pid, now, now))
         conn.commit()
         conn.close()
