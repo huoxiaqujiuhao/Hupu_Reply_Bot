@@ -30,25 +30,30 @@ logger = get_logger("Main")
 #  按日期滚动日志（每天一个文件，保留 7 天）
 # ══════════════════════════════════════════════
 def _setup_rotating_log():
-    root = logging.getLogger()
-    # 检查是否已经加过滚动 handler，避免重复
-    for h in root.handlers:
-        if isinstance(h, TimedRotatingFileHandler):
-            return
+    """把 config.py 里的 FileHandler 替换成滚动版本"""
     fmt = logging.Formatter(
         "%(asctime)s [%(levelname)-5s] [%(name)-11s] %(message)s",
         datefmt="%H:%M:%S",
     )
-    fh = TimedRotatingFileHandler(
+    rotating = TimedRotatingFileHandler(
         "data/logs/hupu.log",
         when="midnight",
         interval=1,
         backupCount=7,
         encoding="utf-8",
     )
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(fmt)
-    root.addHandler(fh)
+    rotating.setLevel(logging.DEBUG)
+    rotating.setFormatter(fmt)
+
+    # 遍历所有已注册的 logger，把 FileHandler 换成滚动版
+    for lgr in logging.Logger.manager.loggerDict.values():
+        if not isinstance(lgr, logging.Logger):
+            continue
+        for h in lgr.handlers[:]:
+            if isinstance(h, logging.FileHandler) and not isinstance(h, TimedRotatingFileHandler):
+                lgr.removeHandler(h)
+                h.close()
+                lgr.addHandler(rotating)
 
 _setup_rotating_log()
 
