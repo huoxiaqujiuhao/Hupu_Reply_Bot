@@ -292,34 +292,6 @@ def fetch_top_comments(urls: list[str]) -> list[dict]:
     return result
 
 
-def analyze_why_high_lights(comments: list[dict], llm: OpenAI) -> list[dict]:
-    if not comments: return []
-    batch = "\n".join([
-        f"{i+1}. 帖子:《{c['post_title'][:20]}》 "
-        f"评论:{c['comment'][:CONFIG['comment_ref_max_chars']]} 亮灯:{c['lights']}"
-        for i, c in enumerate(comments)
-    ])
-    try:
-        resp = llm.chat.completions.create(
-            model=CONFIG["model"],
-            messages=[
-                {"role": "system", "content": CONFIG["prompt_analyze_system"]},
-                {"role": "user", "content": batch},
-            ],
-            response_format={"type": "json_object"},
-            temperature=CONFIG["analyze_temperature"],
-            timeout=CONFIG["llm_timeout"],
-        )
-        parsed  = json.loads(resp.choices[0].message.content.strip())
-        arr     = parsed if isinstance(parsed, list) else next(iter(parsed.values()))
-        why_map = {item["id"]: item["why"] for item in arr}
-        for i, c in enumerate(comments):
-            c["why"] = why_map.get(i+1, "切中用户情绪共鸣点")
-    except Exception:
-        for c in comments:
-            c["why"] = "切中用户情绪共鸣点"
-    return comments
-
 
 def rag_generate(
     title, content, ai_tag,
@@ -334,16 +306,13 @@ def rag_generate(
     )
     similar  = vector_store.query(vec, ai_tag, CONFIG["top_k_posts"])
     comments = fetch_top_comments([p["url"] for p in similar])
-    if comments:
-        comments = analyze_why_high_lights(comments, llm)
 
     if similar:
         logger.info(f"最相似帖：《{similar[0]['title'][:25]}》 相似度 {similar[0]['similarity']:.3f}")
     logger.info(f"参考高赞评论：{len(comments)} 条")
 
     ref_block = ("\n".join([
-        f"  {i+1}. 「{c['comment'][:CONFIG['comment_ref_max_chars']]}」\n"
-        f"     → 高赞原因：{c['why']}"
+        f"  {i+1}. 「{c['comment'][:CONFIG['comment_ref_max_chars']]}」（{c['lights']} 赞）"
         for i, c in enumerate(comments)
     ]) if comments else "  （暂无高相似度历史评论）")
 

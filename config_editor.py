@@ -80,7 +80,6 @@ PARAM_META = {
     "generate_temperature":  {"group": "RAG 参数", "label": "生成回复温度", "desc": "回复生成的随机性，越高越发散（建议 0.6~0.9）", "type": "float"},
     "max_tokens":            {"group": "RAG 参数", "label": "回复最大 Token 数", "desc": "生成回复的最大长度，过长会被截断", "type": "int"},
     "classify_temperature":  {"group": "RAG 参数", "label": "分类 LLM 温度", "desc": "帖子分类时的 LLM 温度，建议保持低值", "type": "float"},
-    "analyze_temperature":   {"group": "RAG 参数", "label": "分析 LLM 温度", "desc": "分析高赞原因时的 LLM 温度", "type": "float"},
 
     # ─── 反思系统 ────────────────────────────
     "memory_positive_threshold":  {"group": "反思系统", "label": "正样本点赞门槛", "desc": "BotComment 赞数 ≥ 此值存为正样本案例", "type": "int"},
@@ -94,7 +93,6 @@ PARAM_META = {
     # ─── Prompt 模板 ────────────────────────────
     "prompt_generate_system":  {"group": "Prompt 模板", "label": "回复生成：人设 + 风格规则", "desc": "rag_generate 的 system prompt 静态部分（成功案例自动追加在末尾）", "type": "textarea"},
     "prompt_classify_system":  {"group": "Prompt 模板", "label": "帖子打分：评判标准", "desc": "classify_post 的评分准则（历史冷帖案例 + JSON格式要求自动追加）", "type": "textarea"},
-    "prompt_analyze_system":   {"group": "Prompt 模板", "label": "高赞分析：指令", "desc": "analyze_why_high_lights 的 system prompt（含JSON输出格式，请勿删除）", "type": "textarea"},
     "prompt_cluster_naming":   {"group": "Prompt 模板", "label": "聚类命名：指令", "desc": "给 other 重聚类后的新分类命名（含JSON输出格式，请勿删除）", "type": "textarea"},
 
     # ─── 防封节奏 ────────────────────────────
