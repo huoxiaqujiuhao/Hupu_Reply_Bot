@@ -128,6 +128,7 @@ CONFIG = {
 
     "memory_top_k_cases":         3,    # 注入 rag_generate 的正样本案例数量
     "memory_top_k_filter":        3,    # 注入筛帖 Prompt 的冷帖案例数量
+    "memory_case_sim_threshold":  0.75, # 案例注入的最低余弦相似度（低于此值不注入）
     "memory_content_max_chars":   200,  # ReplyContext 存储的正文截断长度
 
     # ─────────────────────────────────────────────────────

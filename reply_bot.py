@@ -234,9 +234,11 @@ def classify_post(title: str, content: str, llm: OpenAI,
                 emb_model=emb_model,
                 top_k=CONFIG["memory_top_k_filter"],
             )
+            dead_cases = [c for c in dead_cases
+                          if c["similarity"] >= CONFIG["memory_case_sim_threshold"]]
             if dead_cases:
                 examples = "\n".join(
-                    f"  {i+1}. 标题《{c['post_title'][:40]}》"
+                    f"  {i+1}. 标题《{c['post_title'][:40]}》（相似度{c['similarity']:.2f}）"
                     for i, c in enumerate(dead_cases)
                 )
                 filter_block = (
@@ -357,6 +359,8 @@ def rag_generate(
         category=ai_tag,
         top_k=CONFIG["memory_top_k_cases"],
     )
+    pos_cases = [c for c in pos_cases
+                 if c["similarity"] >= CONFIG["memory_case_sim_threshold"]]
     memory_block = ""
     if pos_cases:
         case_lines = []

@@ -88,6 +88,7 @@ PARAM_META = {
     "reflect_cooldown_hours":     {"group": "反思系统", "label": "案例收集冷静期（小时）", "desc": "发出不足此小时的评论不处理（点赞还不稳定）", "type": "int"},
     "memory_top_k_cases":         {"group": "反思系统", "label": "注入成功案例数", "desc": "生成回复时检索几个最相似的正样本案例注入 Prompt", "type": "int"},
     "memory_top_k_filter":        {"group": "反思系统", "label": "注入冷帖案例数", "desc": "打分阶段注入几个历史冷帖案例标题辅助判断", "type": "int"},
+    "memory_case_sim_threshold":  {"group": "反思系统", "label": "案例注入相似度门槛", "desc": "余弦相似度低于此值的案例不注入 Prompt（防止不相关案例乱入），建议 0.7~0.85", "type": "float"},
     "memory_content_max_chars":   {"group": "反思系统", "label": "ReplyContext 正文截断", "desc": "发帖时存储的帖子正文最多保存多少字", "type": "int"},
 
     # ─── Prompt 模板 ────────────────────────────
