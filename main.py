@@ -15,11 +15,121 @@ main.py — 一键启动总控台
 """
 import time
 import os
+import socket
+import subprocess
 import sqlite3
+import logging
+from logging.handlers import TimedRotatingFileHandler
 from config import CONFIG, get_logger
 
 os.makedirs("data/logs", exist_ok=True)
 logger = get_logger("Main")
+
+
+# ══════════════════════════════════════════════
+#  按日期滚动日志（每天一个文件，保留 7 天）
+# ══════════════════════════════════════════════
+def _setup_rotating_log():
+    root = logging.getLogger()
+    # 检查是否已经加过滚动 handler，避免重复
+    for h in root.handlers:
+        if isinstance(h, TimedRotatingFileHandler):
+            return
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)-5s] [%(name)-11s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    fh = TimedRotatingFileHandler(
+        "data/logs/hupu.log",
+        when="midnight",
+        interval=1,
+        backupCount=7,
+        encoding="utf-8",
+    )
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+_setup_rotating_log()
+
+
+# ══════════════════════════════════════════════
+#  Chrome 自动拉起
+# ══════════════════════════════════════════════
+CHROME_PROFILE = os.path.abspath("data/chrome_profile")
+CDP_PORT = 9222
+
+CHROME_PATHS = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+]
+
+def _cdp_alive() -> bool:
+    """检查 CDP 端口是否已在监听"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1)
+        result = s.connect_ex(("127.0.0.1", CDP_PORT))
+        s.close()
+        return result == 0
+    except Exception:
+        return False
+
+
+def ensure_chrome():
+    """
+    确保 Chrome 以 CDP 模式运行。
+    - 若端口已开：直接复用（无需登录）
+    - 若未开：启动 Chrome，等用户确认登录后继续
+    Cookie 保存在 data/chrome_profile，登录一次永久有效。
+    """
+    if _cdp_alive():
+        logger.info("✅ Chrome CDP 已就绪，复用现有会话")
+        return
+
+    chrome_exe = None
+    for p in CHROME_PATHS:
+        if os.path.exists(p):
+            chrome_exe = p
+            break
+
+    if not chrome_exe:
+        logger.error("❌ 未找到 Chrome，请手动启动并打开 CDP 端口后按回车")
+        input()
+        return
+
+    logger.info("🌐 启动 Chrome（专属 Profile，保留登录状态）...")
+    os.makedirs(CHROME_PROFILE, exist_ok=True)
+    subprocess.Popen([
+        chrome_exe,
+        f"--remote-debugging-port={CDP_PORT}",
+        f"--user-data-dir={CHROME_PROFILE}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "https://bbs.hupu.com",
+    ])
+
+    # 等 Chrome 启动
+    for _ in range(20):
+        if _cdp_alive():
+            break
+        time.sleep(0.5)
+
+    if not _cdp_alive():
+        logger.warning("Chrome 启动超时，请手动确认")
+
+    # 检查是否已登录（profile 有 Cookie 则跳过提示）
+    profile_cookies = os.path.join(CHROME_PROFILE, "Default", "Cookies")
+    if os.path.exists(profile_cookies) and os.path.getsize(profile_cookies) > 10240:
+        logger.info("✅ 检测到已保存的登录 Cookie，自动继续")
+        time.sleep(2)  # 给页面加载时间
+    else:
+        print("\n" + "=" * 55)
+        print("  首次运行：请在弹出的 Chrome 窗口中登录虎扑")
+        print("  登录完成后，回到这里按回车继续 ↓")
+        print("=" * 55)
+        input()
+        logger.info("✅ 用户确认登录完成，继续启动")
 
 
 # ══════════════════════════════════════════════
@@ -65,6 +175,8 @@ def compute_total_reply_budget(total_seconds: float) -> float:
 #  主控
 # ══════════════════════════════════════════════
 def main():
+    ensure_chrome()
+
     program_start = time.time()
     total_seconds = CONFIG["total_max_hours"] * 3600
 
