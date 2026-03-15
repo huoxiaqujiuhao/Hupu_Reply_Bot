@@ -183,12 +183,20 @@ def incremental_update(conn: sqlite3.Connection, context, days: int = 3):
         for item in items:
             pid = item.get("pid")
             if pid in target_pids:
+                new_light = item.get("lightCount", 0)
+                # 如果点赞数跨越正样本阈值，重置 reflected 触发重新反思
+                cur.execute("SELECT light_count FROM BotComments WHERE pid=?", (pid,))
+                row = cur.fetchone()
+                old_light = row[0] if row else 0
+                from config import CONFIG as _CFG
+                if old_light < _CFG["memory_positive_threshold"] <= new_light:
+                    cur.execute("UPDATE BotComments SET reflected=0 WHERE pid=?", (pid,))
                 cur.execute("""
                     UPDATE BotComments
                     SET light_count=?, unlight_count=?, score=?, checked_at=?
                     WHERE pid=?
                 """, (
-                    item.get("lightCount", 0),
+                    new_light,
                     item.get("unlightCount", 0),
                     item.get("score", 0),
                     checked_at,
@@ -264,6 +272,17 @@ def main():
 
         print_summary(conn)
 
+    conn.close()
+
+
+def incremental_update_main():
+    """main.py 启动时调用的入口，自动连接 Playwright"""
+    conn = init_db()
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp("http://localhost:9222")
+        context = browser.contexts[0]
+        incremental_update(conn, context)
+        print_summary(conn)
     conn.close()
 
 
