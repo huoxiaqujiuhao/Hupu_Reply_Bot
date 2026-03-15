@@ -126,15 +126,8 @@ CONFIG = {
     "memory_negative_threshold":  10,   # light_count <= 此值 → 负样本
     "reflect_cooldown_hours":     24,   # 发出不足此小时的评论不反思
 
-    "memory_dedup_threshold":     0.85, # 余弦相似度高于此值 → 强化而非新增
-    "memory_weight_boost":        0.3,  # 每次强化增加的权重
-    "memory_decay_factor":        0.9,  # 每7天冷记忆权重衰减系数
-    "memory_decay_min_weight":    0.1,  # 低于此权重 → 删除
-    "memory_decay_protect_count": 5,    # reinforced_count > 此值 → 不衰减
-
-    "memory_top_k_category":      2,    # 检索同类别记忆数量
-    "memory_top_k_global":        1,    # 检索 global 记忆数量
-    "memory_top_k_filter":        3,    # 注入筛帖 Prompt 的规则数量
+    "memory_top_k_cases":         3,    # 注入 rag_generate 的正样本案例数量
+    "memory_top_k_filter":        3,    # 注入筛帖 Prompt 的冷帖案例数量
     "memory_content_max_chars":   200,  # ReplyContext 存储的正文截断长度
 
     # ─────────────────────────────────────────────────────

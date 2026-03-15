@@ -1,6 +1,7 @@
 """
-memory_store.py — 向量记忆存取
-负责 Memories / ReplyContext 表的增删改查、去重、衰减
+memory_store.py — 案例存取
+Cases 表：存储 Bot 历史发言的原始案例（帖子+回复+结果）
+检索时用向量相似度，找出最相关的成功/失败案例注入 Prompt
 """
 import sqlite3
 import time
@@ -18,18 +19,17 @@ def init_db():
     conn = sqlite3.connect(CONFIG["db_name"])
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS Memories (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            rule_text        TEXT NOT NULL,
-            embedding        BLOB NOT NULL,
-            category         TEXT NOT NULL,
-            rule_type        TEXT NOT NULL,
-            weight           REAL    DEFAULT 1.0,
-            reinforced_count INTEGER DEFAULT 1,
-            evidence_likes   INTEGER DEFAULT 0,
-            source_pid       INTEGER,
-            created_at       INTEGER,
-            updated_at       INTEGER
+        CREATE TABLE IF NOT EXISTS Cases (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            tid          INTEGER UNIQUE,
+            post_title   TEXT,
+            post_content TEXT,
+            bot_reply    TEXT,
+            light_count  INTEGER DEFAULT 0,
+            category     TEXT,
+            case_type    TEXT,
+            embedding    BLOB,
+            created_at   INTEGER
         )
     """)
     conn.execute("""
@@ -60,166 +60,105 @@ def _from_blob(blob: bytes) -> np.ndarray:
 
 
 # ══════════════════════════════════════════════
-#  添加记忆（含去重）
+#  添加案例
 # ══════════════════════════════════════════════
-def add_memory(
-    rule_text:     str,
-    category:      str,
-    rule_type:     str,
-    evidence_likes: int,
-    source_pid:    int | None,
-    emb_model:     SentenceTransformer,
-) -> str:
+def add_case(
+    tid:          int,
+    post_title:   str,
+    post_content: str,
+    bot_reply:    str,
+    light_count:  int,
+    category:     str,
+    case_type:    str,       # positive / negative_dead / negative_wrong
+    emb_model:    SentenceTransformer,
+) -> bool:
     """
-    返回 'reinforced'（强化了已有规则）或 'inserted'（插入了新规则）
+    插入一条案例，tid 唯一。
+    返回 True=新插入，False=已存在跳过
     """
-    vec = emb_model.encode(rule_text, normalize_embeddings=True).astype(np.float32)
-    now = int(time.time())
+    text = f"{post_title}。{(post_content or '')[:CONFIG['post_text_max_chars']]}"
+    vec  = emb_model.encode(text, normalize_embeddings=True).astype(np.float32)
 
     conn = sqlite3.connect(CONFIG["db_name"])
     cur  = conn.cursor()
-
-    cur.execute(
-        "SELECT id, embedding, weight, reinforced_count FROM Memories WHERE category=?",
-        (category,)
-    )
-    rows = cur.fetchall()
-
-    best_id, best_sim = None, 0.0
-    for row_id, blob, weight, count in rows:
-        sim = float(np.dot(vec, _from_blob(blob)))
-        if sim > best_sim:
-            best_sim, best_id = sim, row_id
-
-    threshold = CONFIG["memory_dedup_threshold"]
-
-    if best_sim >= threshold:
+    try:
         cur.execute("""
-            UPDATE Memories
-            SET weight           = weight + ?,
-                reinforced_count = reinforced_count + 1,
-                updated_at       = ?
-            WHERE id = ?
-        """, (CONFIG["memory_weight_boost"], now, best_id))
+            INSERT INTO Cases
+                (tid, post_title, post_content, bot_reply,
+                 light_count, category, case_type, embedding, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (tid, post_title,
+              (post_content or "")[:CONFIG["memory_content_max_chars"]],
+              bot_reply, light_count, category, case_type,
+              _to_blob(vec), int(time.time())))
         conn.commit()
-        conn.close()
-        logger.debug(f"记忆强化 (sim={best_sim:.2f}): {rule_text[:40]}")
-        return "reinforced"
-    else:
-        cur.execute("""
-            INSERT INTO Memories
-                (rule_text, embedding, category, rule_type,
-                 weight, reinforced_count, evidence_likes, source_pid,
-                 created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1.0, 1, ?, ?, ?, ?)
-        """, (rule_text, _to_blob(vec), category, rule_type,
-              evidence_likes, source_pid, now, now))
-        conn.commit()
-        conn.close()
-        logger.info(f"新记忆 [{category}/{rule_type}]: {rule_text[:50]}")
-        return "inserted"
+        inserted = True
+    except sqlite3.IntegrityError:
+        inserted = False
+    conn.close()
+    return inserted
 
 
 # ══════════════════════════════════════════════
-#  检索回复策略记忆
+#  检索案例（向量相似度）
 # ══════════════════════════════════════════════
-def search(
-    query_text: str,
-    category:   str,
-    emb_model:  SentenceTransformer,
+def search_cases(
+    query_text:  str,
+    case_type:   str,
+    emb_model:   SentenceTransformer,
+    category:    str = None,
+    top_k:       int = None,
 ) -> list[dict]:
     """
-    先查同类别，再查 global，按相似度×weight 排序
-    返回字段：rule_text, weight, reinforced_count, score
+    按帖子相似度检索案例。
+    category 不为 None 时优先同类，不足则补全局。
     """
+    if top_k is None:
+        top_k = CONFIG["memory_top_k_cases"]
+
     query_vec = emb_model.encode(query_text, normalize_embeddings=True).astype(np.float32)
 
     conn = sqlite3.connect(CONFIG["db_name"])
     cur  = conn.cursor()
-
-    results = []
-    queries = [(category, CONFIG["memory_top_k_category"])]
-    if category != "global":
-        queries.append(("global", CONFIG["memory_top_k_global"]))
-
-    for cat, top_k in queries:
-        cur.execute(
-            "SELECT rule_text, embedding, weight, reinforced_count "
-            "FROM Memories WHERE category=? AND rule_type != 'negative_dead'",
-            (cat,)
-        )
-        rows = cur.fetchall()
-        if not rows:
-            continue
-        scored = []
-        for rule_text, blob, weight, count in rows:
-            sim   = float(np.dot(query_vec, _from_blob(blob)))
-            score = sim * weight
-            scored.append({
-                "rule_text":       rule_text,
-                "weight":          weight,
-                "reinforced_count": count,
-                "score":           score,
-            })
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        results.extend(scored[:top_k])
-
-    conn.close()
-    return results
-
-
-def search_filter_rules() -> list[str]:
-    """返回筛帖规则（filter 类别），按 weight 降序"""
-    conn = sqlite3.connect(CONFIG["db_name"])
-    cur  = conn.cursor()
     cur.execute(
-        "SELECT rule_text FROM Memories WHERE category='filter' "
-        "ORDER BY weight DESC LIMIT ?",
-        (CONFIG["memory_top_k_filter"],)
+        "SELECT tid, post_title, post_content, bot_reply, light_count, category, embedding "
+        "FROM Cases WHERE case_type=?",
+        (case_type,)
     )
-    rules = [row[0] for row in cur.fetchall()]
+    rows = cur.fetchall()
     conn.close()
-    return rules
+
+    if not rows:
+        return []
+
+    scored = []
+    for tid, title, content, reply, likes, cat, blob in rows:
+        sim = float(np.dot(query_vec, _from_blob(blob)))
+        scored.append({
+            "tid":          tid,
+            "post_title":   title,
+            "post_content": content,
+            "bot_reply":    reply,
+            "light_count":  likes,
+            "category":     cat,
+            "similarity":   sim,
+        })
+
+    # 同类优先
+    if category:
+        same = [x for x in scored if x["category"] == category]
+        other = [x for x in scored if x["category"] != category]
+        same.sort(key=lambda x: x["similarity"], reverse=True)
+        other.sort(key=lambda x: x["similarity"], reverse=True)
+        merged = same[:top_k] + other[:max(0, top_k - len(same[:top_k]))]
+        return merged[:top_k]
+    else:
+        scored.sort(key=lambda x: x["similarity"], reverse=True)
+        return scored[:top_k]
 
 
 # ══════════════════════════════════════════════
-#  记忆衰减（每7天调一次）
-# ══════════════════════════════════════════════
-_DECAY_FLAG = "data/.last_decay"
-
-def decay_if_needed():
-    now = int(time.time())
-    try:
-        with open(_DECAY_FLAG) as f:
-            last = int(f.read().strip())
-    except Exception:
-        last = 0
-
-    if now - last < 7 * 86400:
-        return
-
-    conn = sqlite3.connect(CONFIG["db_name"])
-    cur  = conn.cursor()
-    cur.execute("""
-        UPDATE Memories
-        SET weight = weight * ?, updated_at = ?
-        WHERE reinforced_count <= ? AND updated_at < ?
-    """, (CONFIG["memory_decay_factor"], now,
-          CONFIG["memory_decay_protect_count"], now - 7 * 86400))
-    cur.execute(
-        "DELETE FROM Memories WHERE weight < ?",
-        (CONFIG["memory_decay_min_weight"],)
-    )
-    conn.commit()
-    conn.close()
-    logger.info("记忆衰减完成")
-
-    with open(_DECAY_FLAG, "w") as f:
-        f.write(str(now))
-
-
-# ══════════════════════════════════════════════
-#  ReplyContext 读写（reply_bot.py 发帖后调用）
+#  ReplyContext 读写
 # ══════════════════════════════════════════════
 def save_reply_context(tid: int, content: str, post_title: str,
                        post_content: str, post_category: str,
@@ -262,13 +201,13 @@ def get_reply_context(tid: int, content: str) -> dict | None:
 def print_stats():
     conn = sqlite3.connect(CONFIG["db_name"])
     cur  = conn.cursor()
-    cur.execute("SELECT category, rule_type, COUNT(*), AVG(weight) FROM Memories GROUP BY category, rule_type")
+    cur.execute("SELECT case_type, COUNT(*) FROM Cases GROUP BY case_type")
     rows = cur.fetchall()
     conn.close()
     if not rows:
-        logger.info("Memories 表为空")
+        logger.info("Cases 表为空")
         return
-    logger.info("── Memories 摘要 ──────────────────────")
-    for cat, rtype, cnt, avg_w in rows:
-        logger.info(f"  [{cat}/{rtype}] {cnt} 条，平均权重 {avg_w:.2f}")
-    logger.info("───────────────────────────────────────")
+    logger.info("── Cases 摘要 ────────────────────────")
+    for ctype, cnt in rows:
+        logger.info(f"  [{ctype}] {cnt} 条")
+    logger.info("─────────────────────────────────────")

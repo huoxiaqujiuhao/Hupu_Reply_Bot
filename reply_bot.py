@@ -216,7 +216,8 @@ class InMemoryVectorStore:
 # ══════════════════════════════════════════════
 #  RAG 流水线
 # ══════════════════════════════════════════════
-def classify_post(title: str, content: str, llm: OpenAI) -> dict:
+def classify_post(title: str, content: str, llm: OpenAI,
+                  emb_model: SentenceTransformer = None) -> dict:
     """
     用 LLM 给当前待回复帖子打标签，用于 RAG 检索。
     注意：这里调用 LLM 是为了找到相似的历史帖子，不是批量打标。
@@ -225,11 +226,25 @@ def classify_post(title: str, content: str, llm: OpenAI) -> dict:
         with open(CONFIG["taxonomy_file"], encoding="utf-8") as f:
             taxonomy = json.load(f)
         taxonomy_str = json.dumps(taxonomy, ensure_ascii=False, separators=(',', ':'))
-        filter_rules = memory_store.search_filter_rules()
-        filter_block = (
-            "\n【历史筛帖经验——以下特征的帖子往往是冷帖，打分时酌情降低分数】\n"
-            + "\n".join(f"- {r}" for r in filter_rules)
-        ) if filter_rules else ""
+
+        filter_block = ""
+        if emb_model is not None:
+            query_text  = f"{title}。{(content or '')[:200]}"
+            dead_cases  = memory_store.search_cases(
+                query_text=query_text,
+                case_type="negative_dead",
+                emb_model=emb_model,
+                top_k=CONFIG["memory_top_k_filter"],
+            )
+            if dead_cases:
+                examples = "\n".join(
+                    f"  {i+1}. 标题《{c['post_title'][:40]}》"
+                    for i, c in enumerate(dead_cases)
+                )
+                filter_block = (
+                    "\n【历史冷帖案例——以下类型的帖子你曾回复后几乎没有获赞，说明帖子本身缺乏讨论热度，打分时酌情降低】\n"
+                    + examples
+                )
 
         system_prompt = (
             "你是一个资深的社区运营专家。请完成两个任务：\n"
@@ -344,19 +359,24 @@ def rag_generate(
         if current_replies else "  （目前暂无回复）"
     )
 
-    memories = memory_store.search(
+    pos_cases   = memory_store.search_cases(
         query_text=f"{title}。{(content or '')[:200]}",
-        category=ai_tag,
+        case_type="positive",
         emb_model=emb_model,
+        category=ai_tag,
+        top_k=CONFIG["memory_top_k_cases"],
     )
     memory_block = ""
-    if memories:
-        memory_block = (
-            "\n【历史经验参考（你过去总结的成功规律，适当参考但不要机械套用）】\n"
-            + "\n".join(
-                f"- {m['rule_text']}（被验证{m['reinforced_count']}次）"
-                for m in memories
+    if pos_cases:
+        case_lines = []
+        for c in pos_cases:
+            case_lines.append(
+                f"- 帖子《{c['post_title'][:30]}》\n"
+                f"  你当时的评论：「{c['bot_reply'][:100]}」（获得 {c['light_count']} 赞）"
             )
+        memory_block = (
+            "\n【你过去的成功评论案例（最相似话题，参考切入角度和语气，不要照抄）】\n"
+            + "\n".join(case_lines)
         )
 
     system = (
@@ -528,7 +548,7 @@ def run_scan_loop(
                 continue
 
             # AI 质检（LLM 调用，用于 RAG 检索，见文件头部注释）
-            post_analysis = classify_post(post_data["title"], post_data["content"], llm)
+            post_analysis = classify_post(post_data["title"], post_data["content"], llm, emb_model)
             ai_tag        = post_analysis["ai_tag"]
             value_score   = post_analysis["value_score"]
             logger.info(f"  分类: {ai_tag} | 潜力值: {value_score}/10")
