@@ -1,20 +1,39 @@
+"""
+rename_tool.py
+──────────────
+给已打完标签的类别批量重命名，让名字更口语化、更符合虎扑语境。
+（此文件原名 debug.py，实际功能是重命名工具）
+
+运行顺序：
+  1. test_scraper.py       → 爬虫，采集帖子进库
+  2. Taxonomy_generator.py → 聚类，生成 data/taxonomy.json
+  3. ai_labeler.py         → 打标，给每个帖子写 ai_tag
+  4. rename_tool.py        → 重命名，美化类别名称（可选）
+  5. reply_bot.py          → 回复机器人，消费端
+"""
 import sqlite3
 import json
 import time
 import logging
+import os
 from openai import OpenAI
+
+os.makedirs("data/logs", exist_ok=True)
 
 # ══════════════════════════════════════════════
 #  配置区
 # ══════════════════════════════════════════════
 CONFIG = {
-    "db_name":      "hupu_arsenal.db",
-    "model":        "qwen3.5-35b-a3b",
-    "api_key":      "sk-3d1b473a741d4abba85c9c3fa6933bac",
-    "base_url":     "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    "sample_size":  15,    # 每个类别随机抽多少个帖子给 LLM 看
-    "base_sleep":   1.0,
+    "db_name":           "data/hupu_arsenal.db",
+    "rename_result_file": "data/rename_result.json",
+    "log_file":          "data/logs/rename_tool.log",
+    "model":             "qwen3.5-35b-a3b",
+    "api_key":           "sk-3d1b473a741d4abba85c9c3fa6933bac",
+    "base_url":          "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "sample_size":       15,
+    "base_sleep":        1.0,
 }
+
 
 # ══════════════════════════════════════════════
 #  日志系统
@@ -23,12 +42,15 @@ def init_logger() -> logging.Logger:
     logger = logging.getLogger("Renamer")
     logger.setLevel(logging.DEBUG)
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    fh = logging.FileHandler("rename_log.log", encoding="utf-8")
+
+    fh = logging.FileHandler(CONFIG["log_file"], encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
+
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
+
     logger.addHandler(fh)
     logger.addHandler(ch)
     return logger
@@ -47,7 +69,6 @@ def get_all_categories(cursor) -> list[str]:
 
 
 def get_sample_posts(cursor, ai_tag: str, n: int) -> list[dict]:
-    """随机抽取 n 个帖子，带标题和最高赞评论"""
     cursor.execute("""
         SELECT p.url, p.title
         FROM Posts p
@@ -59,17 +80,13 @@ def get_sample_posts(cursor, ai_tag: str, n: int) -> list[dict]:
 
     result = []
     for url, title in posts:
-        # 取该帖最高赞的 2 条评论
         cursor.execute("""
             SELECT content FROM Comments
             WHERE post_url = ?
             ORDER BY lights DESC LIMIT 3
         """, (url,))
         comments = [r[0] for r in cursor.fetchall()]
-        result.append({
-            "title": title,
-            "comments": comments
-        })
+        result.append({"title": title, "comments": comments})
     return result
 
 
@@ -77,9 +94,6 @@ def get_sample_posts(cursor, ai_tag: str, n: int) -> list[dict]:
 #  LLM 命名
 # ══════════════════════════════════════════════
 def ask_llm_to_rename(client, old_tag: str, samples: list[dict], logger) -> dict | None:
-    """给 LLM 看当前名字 + 样本帖子，让它起一个更口语化的新名字"""
-
-    # 拼样本文本，控制 token
     samples_text = ""
     for i, s in enumerate(samples, 1):
         comments_str = " | ".join(s["comments"]) if s["comments"] else "无"
@@ -108,13 +122,13 @@ def ask_llm_to_rename(client, old_tag: str, samples: list[dict], logger) -> dict
             model=CONFIG["model"],
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt}
+                {"role": "user",   "content": user_prompt},
             ],
             response_format={"type": "json_object"},
-            temperature=0.3,  # 稍微放开一点创意空间
-            timeout=150
+            temperature=0.3,
+            timeout=150,
         )
-        result = json.loads(response.choices[0].message.content.strip())
+        result    = json.loads(response.choices[0].message.content.strip())
         primary   = result.get("primary", "").strip()
         secondary = result.get("secondary", "").strip()
         reason    = result.get("reason", "")
@@ -122,10 +136,7 @@ def ask_llm_to_rename(client, old_tag: str, samples: list[dict], logger) -> dict
         if not primary or not secondary:
             raise ValueError("LLM 返回的名字字段为空")
 
-        return {
-            "new_tag": f"{primary}-{secondary}",
-            "reason": reason
-        }
+        return {"new_tag": f"{primary}-{secondary}", "reason": reason}
     except Exception as e:
         logger.error(f"  LLM 命名失败: {e}")
         return None
@@ -135,11 +146,7 @@ def ask_llm_to_rename(client, old_tag: str, samples: list[dict], logger) -> dict
 #  写回数据库
 # ══════════════════════════════════════════════
 def apply_rename(cursor, conn, old_tag: str, new_tag: str):
-    """把所有属于 old_tag 的帖子的 ai_tag 改成 new_tag"""
-    cursor.execute(
-        "UPDATE Posts SET ai_tag = ? WHERE ai_tag = ?",
-        (new_tag, old_tag)
-    )
+    cursor.execute("UPDATE Posts SET ai_tag = ? WHERE ai_tag = ?", (new_tag, old_tag))
     conn.commit()
 
 
@@ -150,55 +157,47 @@ def main():
     logger = init_logger()
     logger.info("🏷️  类别重命名工具启动")
 
-    conn = sqlite3.connect(CONFIG["db_name"])
+    conn   = sqlite3.connect(CONFIG["db_name"])
     cursor = conn.cursor()
     client = OpenAI(api_key=CONFIG["api_key"], base_url=CONFIG["base_url"])
 
     categories = get_all_categories(cursor)
     logger.info(f"📦 共发现 {len(categories)} 个类别，开始逐一重命名...\n" + "═" * 55)
 
-    rename_map = {}   # 记录改名对照表，最后打印 + 保存
-    failed = []
+    rename_map = {}
+    failed     = []
 
     for i, old_tag in enumerate(categories, 1):
-        # 统计该类别帖子数
         cursor.execute("SELECT COUNT(*) FROM Posts WHERE ai_tag = ?", (old_tag,))
         count = cursor.fetchone()[0]
-
         logger.info(f"\n[{i}/{len(categories)}] 处理：【{old_tag}】（{count} 篇）")
 
-        # 抽样
-        n = min(CONFIG["sample_size"], count)
+        n       = min(CONFIG["sample_size"], count)
         samples = get_sample_posts(cursor, old_tag, n)
-
-        # 让 LLM 命名
-        result = ask_llm_to_rename(client, old_tag, samples, logger)
+        result  = ask_llm_to_rename(client, old_tag, samples, logger)
 
         if result:
             new_tag = result["new_tag"]
             reason  = result["reason"]
 
             if new_tag == old_tag:
-                logger.info(f"  💡 LLM 认为原名已够清晰，保持不变。")
+                logger.info("  💡 LLM 认为原名已够清晰，保持不变。")
                 rename_map[old_tag] = {"new": old_tag, "reason": "保持原名", "count": count}
             else:
-                # 写回数据库
                 apply_rename(cursor, conn, old_tag, new_tag)
                 logger.info(f"  ✅ 改名成功：【{old_tag}】→【{new_tag}】")
                 logger.info(f"     理由：{reason}")
                 rename_map[old_tag] = {"new": new_tag, "reason": reason, "count": count}
         else:
-            logger.warning(f"  ⚠️ 命名失败，保留原名。")
+            logger.warning("  ⚠️ 命名失败，保留原名。")
             failed.append(old_tag)
             rename_map[old_tag] = {"new": old_tag, "reason": "命名失败，保留原名", "count": count}
 
         time.sleep(CONFIG["base_sleep"])
 
-    # ── 保存改名对照表 ─────────────────────────────
-    with open("rename_result.json", "w", encoding="utf-8") as f:
+    with open(CONFIG["rename_result_file"], "w", encoding="utf-8") as f:
         json.dump(rename_map, f, ensure_ascii=False, indent=2)
 
-    # ── 终端打印对照表 ─────────────────────────────
     logger.info(f"\n{'═' * 55}")
     logger.info("📋 改名对照表：")
     logger.info(f"  {'原名':<30} {'新名':<30} {'帖子数'}")
@@ -212,7 +211,7 @@ def main():
         for f in failed:
             logger.warning(f"  - {f}")
 
-    logger.info(f"\n✅ 全部完成！对照表已保存至 rename_result.json")
+    logger.info(f"\n✅ 全部完成！对照表已保存至 {CONFIG['rename_result_file']}")
     conn.close()
 
 

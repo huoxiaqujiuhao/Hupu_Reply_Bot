@@ -80,7 +80,7 @@ def main():
     logger.info("🧠 加载 Embedding 模型（首次运行稍慢）...")
     from sentence_transformers import SentenceTransformer
     from openai import OpenAI
-    import test_scraper
+    import scraper as test_scraper
     import classifier
     import reply_bot
     import profile_scraper

@@ -147,6 +147,15 @@ CONFIG = {
     "log_file":             "data/logs/hupu.log",
 }
 
+# ── 加载用户通过可视化界面保存的覆盖值（不修改上方默认值）──
+import json as _json
+_OVERRIDES_FILE = "data/config_overrides.json"
+try:
+    with open(_OVERRIDES_FILE, encoding="utf-8") as _f:
+        CONFIG.update(_json.load(_f))
+except (FileNotFoundError, Exception):
+    pass
+
 
 # ═══════════════════════════════════════════════════════════
 #  日志系统（所有模块共用同一个日志文件 + 终端输出）
