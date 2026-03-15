@@ -304,11 +304,14 @@ def rag_generate(
         f"{title}。{(content or '')[:CONFIG['post_text_max_chars']]}",
         normalize_embeddings=True,
     )
-    similar  = vector_store.query(vec, ai_tag, CONFIG["top_k_posts"])
+    similar  = [p for p in vector_store.query(vec, ai_tag, CONFIG["top_k_posts"])
+                if p["similarity"] >= CONFIG["memory_case_sim_threshold"]]
     comments = fetch_top_comments([p["url"] for p in similar])
 
     if similar:
         logger.info(f"最相似帖：《{similar[0]['title'][:25]}》 相似度 {similar[0]['similarity']:.3f}")
+    else:
+        logger.info("无高相似度历史帖，跳过 ref_block")
     logger.info(f"参考高赞评论：{len(comments)} 条")
 
     ref_block = ("\n".join([
