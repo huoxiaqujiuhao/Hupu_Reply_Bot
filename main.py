@@ -195,7 +195,7 @@ def main():
 
     # ── 全局初始化（只做一次）────────────────────
     logger.info("🧠 加载 Embedding 模型（首次运行稍慢）...")
-    from sentence_transformers import SentenceTransformer
+    from embedder import EmbeddingModel
     from openai import OpenAI
     import scraper as test_scraper
     import classifier
@@ -203,7 +203,7 @@ def main():
     import profile_scraper
     import memory_reviewer
 
-    emb_model = SentenceTransformer(CONFIG["embedding_model"])
+    emb_model = EmbeddingModel(CONFIG["embedding_model"])
     llm       = OpenAI(api_key=CONFIG["api_key"], base_url=CONFIG["base_url"])
     logger.info("✅ 初始化完成\n")
 

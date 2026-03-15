@@ -15,7 +15,7 @@ classifier.py — 质心相似度分类 + other 重聚类
 import sqlite3
 import json
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from embedder import EmbeddingModel
 from openai import OpenAI
 from config import CONFIG, get_logger
 
@@ -41,7 +41,7 @@ def save_centroids(centroids: dict[str, np.ndarray]):
     logger.debug(f"质心已保存：{len(centroids)} 个类别")
 
 
-def rebuild_centroids(emb_model: SentenceTransformer) -> dict[str, np.ndarray]:
+def rebuild_centroids(emb_model: EmbeddingModel) -> dict[str, np.ndarray]:
     """
     从数据库重建所有类别的质心（不含 other 和 ERROR）。
     耗时操作，只在以下情况调用：
@@ -90,7 +90,7 @@ def rebuild_centroids(emb_model: SentenceTransformer) -> dict[str, np.ndarray]:
 # ══════════════════════════════════════════════
 #  主分类函数（不调 LLM）
 # ══════════════════════════════════════════════
-def classify_posts(emb_model: SentenceTransformer) -> int:
+def classify_posts(emb_model: EmbeddingModel) -> int:
     """
     对所有 ai_tag IS NULL 的帖子进行分类。
     返回本次处理的帖子数量。
@@ -193,7 +193,7 @@ def _update_centroids_incrementally(
 # ══════════════════════════════════════════════
 #  other 重聚类
 # ══════════════════════════════════════════════
-def check_and_recluster_others(emb_model: SentenceTransformer, llm: OpenAI) -> bool:
+def check_and_recluster_others(emb_model: EmbeddingModel, llm: OpenAI) -> bool:
     """
     检查 other 数量，达到阈值则重聚类，生成新子类，重建全量质心。
     返回是否触发了重聚类。

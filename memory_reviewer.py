@@ -8,7 +8,7 @@ import json
 import time
 import re
 from playwright.sync_api import sync_playwright
-from sentence_transformers import SentenceTransformer
+from embedder import EmbeddingModel
 from openai import OpenAI
 from config import CONFIG, get_logger
 import memory_store
@@ -158,7 +158,7 @@ def _process_one(pid, tid, content, light_count, emb_model, context):
 # ══════════════════════════════════════════════
 #  主入口
 # ══════════════════════════════════════════════
-def run(emb_model: SentenceTransformer, llm: OpenAI = None):
+def run(emb_model: EmbeddingModel, llm: OpenAI = None):
     _migrate_db()
 
     cutoff = int(time.time()) - COOLDOWN_HOURS * 3600

@@ -77,6 +77,7 @@ PARAM_META = {
     "post_prompt_max_chars": {"group": "RAG 参数", "label": "正文注入截断长度", "desc": "注入 Prompt 的帖子正文最多取多少字", "type": "int"},
     "current_replies_count": {"group": "RAG 参数", "label": "当前风向评论数", "desc": "抓取帖子时读取最新几条评论作为风向参考", "type": "int"},
     "reply_top_lights":      {"group": "RAG 参数", "label": "读取高赞评论数", "desc": "解析帖子时读取几条高赞评论（lights）", "type": "int"},
+    "hybrid_alpha":          {"group": "RAG 参数", "label": "混合检索稠密权重", "desc": "稠密向量得分权重（1-此值=稀疏权重），仅 bge-m3 有效，推荐 0.7", "type": "float"},
     "generate_temperature":  {"group": "RAG 参数", "label": "生成回复温度", "desc": "回复生成的随机性，越高越发散（建议 0.6~0.9）", "type": "float"},
     "max_tokens":            {"group": "RAG 参数", "label": "回复最大 Token 数", "desc": "生成回复的最大长度，过长会被截断", "type": "int"},
     "classify_temperature":  {"group": "RAG 参数", "label": "分类 LLM 温度", "desc": "帖子分类时的 LLM 温度，建议保持低值", "type": "float"},

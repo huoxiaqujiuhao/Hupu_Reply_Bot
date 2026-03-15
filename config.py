@@ -48,7 +48,7 @@ CONFIG = {
     # ─────────────────────────────────────────────────────
     #  🏷️ 分类参数
     # ─────────────────────────────────────────────────────
-    "embedding_model":    "BAAI/bge-small-zh-v1.5",
+    "embedding_model":    "BAAI/bge-m3",
     "post_text_max_chars": 400,   # 正文截断长度（用于向量化）
     "vector_batch_size":   64,
 
@@ -112,6 +112,9 @@ CONFIG = {
     "post_prompt_max_chars":  400,
     "current_replies_count":  6,
     "reply_top_lights":       10,
+
+    # 混合检索权重（仅 bge-m3 生效；0=纯稀疏，1=纯稠密，推荐 0.7）
+    "hybrid_alpha":           0.7,
 
     # LLM 温度
     "classify_temperature":   0.1,

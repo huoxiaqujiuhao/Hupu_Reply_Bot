@@ -11,7 +11,6 @@ reply_bot.py — 回复机器人（消费端）
       这个 LLM 调用和数据库爬虫的分类是独立的，是必要的。
 """
 from playwright.sync_api import sync_playwright
-from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 import sqlite3
 import json
@@ -20,6 +19,7 @@ import random
 import re
 import numpy as np
 from config import CONFIG, get_logger
+from embedder import EmbeddingModel, sparse_dot
 import memory_store
 
 logger = get_logger("ReplyBot")
@@ -159,9 +159,10 @@ def parse_post(page) -> dict | None:
 #  内存向量库
 # ══════════════════════════════════════════════
 class InMemoryVectorStore:
-    def __init__(self, db_name: str, emb_model: SentenceTransformer):
+    def __init__(self, db_name: str, emb_model: EmbeddingModel):
         self.urls, self.titles, self.ai_tags = [], [], []
-        self.matrix = None
+        self.matrix      = None
+        self.sparse_list = []          # list[dict]，与 urls 等长
 
         conn = sqlite3.connect(db_name)
         cur  = conn.cursor()
@@ -186,26 +187,39 @@ class InMemoryVectorStore:
             self.ai_tags.append(ai_tag)
             texts.append(f"{title}。{(content or '')[:CONFIG['post_text_max_chars']]}")
 
-        vecs = emb_model.encode(
-            texts,
-            batch_size=CONFIG["vector_batch_size"],
-            show_progress_bar=False,
-            normalize_embeddings=True,
+        dense, sparse = emb_model.encode_hybrid(
+            texts, batch_size=CONFIG["vector_batch_size"]
         )
-        self.matrix = vecs.astype(np.float32)
-        logger.info(f"向量库就绪：{len(self.urls)} 篇，维度 {self.matrix.shape[1]}")
+        self.matrix      = dense.astype(np.float32)
+        self.sparse_list = sparse
+        logger.info(f"向量库就绪：{len(self.urls)} 篇，维度 {self.matrix.shape[1]}"
+                    f"{'（混合检索）' if emb_model.is_hybrid else '（仅稠密）'}")
 
-    def query(self, vec: np.ndarray, ai_tag: str, top_k: int) -> list[dict]:
+    def query(self, q_dense: np.ndarray, q_sparse: dict,
+              ai_tag: str, top_k: int) -> list[dict]:
         if self.matrix.shape[0] == 0:
             return []
         mask = np.array([t == ai_tag for t in self.ai_tags])
         if not mask.any():
             return []
-        sims         = self.matrix[mask] @ vec
+
         filtered_idx = np.where(mask)[0]
-        top_local    = np.argsort(sims)[::-1][:top_k]
+        alpha        = CONFIG["hybrid_alpha"]
+
+        dense_sims = self.matrix[mask] @ q_dense
+        if q_sparse and self.sparse_list:
+            sparse_sims = np.array([
+                sparse_dot(q_sparse, self.sparse_list[i])
+                for i in filtered_idx
+            ], dtype=np.float32)
+            sims = alpha * dense_sims + (1.0 - alpha) * sparse_sims
+        else:
+            sims = dense_sims
+
+        top_local = np.argsort(sims)[::-1][:top_k]
         return [
-            {"url": self.urls[filtered_idx[i]], "title": self.titles[filtered_idx[i]],
+            {"url":        self.urls[filtered_idx[i]],
+             "title":      self.titles[filtered_idx[i]],
              "similarity": float(sims[i])}
             for i in top_local
         ]
@@ -215,7 +229,7 @@ class InMemoryVectorStore:
 #  RAG 流水线
 # ══════════════════════════════════════════════
 def classify_post(title: str, content: str, llm: OpenAI,
-                  emb_model: SentenceTransformer = None) -> dict:
+                  emb_model: EmbeddingModel = None) -> dict:
     """
     用 LLM 给当前待回复帖子打标签，用于 RAG 检索。
     注意：这里调用 LLM 是为了找到相似的历史帖子，不是批量打标。
@@ -296,15 +310,15 @@ def fetch_top_comments(urls: list[str]) -> list[dict]:
 def rag_generate(
     title, content, ai_tag,
     vector_store: InMemoryVectorStore,
-    emb_model: SentenceTransformer,
+    emb_model: EmbeddingModel,
     llm: OpenAI,
     current_replies: list[str] = None,
 ) -> str:
-    vec      = emb_model.encode(
-        f"{title}。{(content or '')[:CONFIG['post_text_max_chars']]}",
-        normalize_embeddings=True,
-    )
-    similar  = [p for p in vector_store.query(vec, ai_tag, CONFIG["top_k_posts"])
+    query_text       = f"{title}。{(content or '')[:CONFIG['post_text_max_chars']]}"
+    dense_mat, sp    = emb_model.encode_hybrid([query_text])
+    q_dense, q_sparse = dense_mat[0], sp[0]
+
+    similar  = [p for p in vector_store.query(q_dense, q_sparse, ai_tag, CONFIG["top_k_posts"])
                 if p["similarity"] >= CONFIG["memory_case_sim_threshold"]]
     comments = fetch_top_comments([p["url"] for p in similar])
 
@@ -572,7 +586,7 @@ def auto_crawler(
     cum_reply_secs_at_start: float,
     total_reply_budget: float,
     vector_store: InMemoryVectorStore,
-    emb_model: SentenceTransformer,
+    emb_model: EmbeddingModel,
     llm: OpenAI,
 ):
     """
@@ -674,10 +688,8 @@ def auto_crawler(
 #  单独运行入口
 # ══════════════════════════════════════════════
 if __name__ == "__main__":
-    from sentence_transformers import SentenceTransformer
-
     logger.info("🧠 加载 Embedding 模型...")
-    _emb_model    = SentenceTransformer(CONFIG["embedding_model"])
+    _emb_model    = EmbeddingModel(CONFIG["embedding_model"])
     _vector_store = InMemoryVectorStore(CONFIG["db_name"], _emb_model)
     _llm          = OpenAI(api_key=CONFIG["api_key"], base_url=CONFIG["base_url"])
     logger.info("✅ 就绪\n")
