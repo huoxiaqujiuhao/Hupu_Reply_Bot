@@ -24,6 +24,7 @@ logger = get_logger("BballSlang")
 
 SLANG_MIN_LIGHTS     = 15    # 评论至少多少赞才被纳入提炼素材
 MAX_COMMENTS_PER_RUN = 60    # 每个 subject 每次最多喂给 LLM 多少条评论
+BATCH_SIZE           = 30    # 大 subject 分批提炼时每批评论数
 UPDATE_GROWTH_RATIO  = 1.5   # 新评论 > 上次数量 × 此倍数 → 触发重新提炼
 
 _SLANG_SYSTEM = (
@@ -120,30 +121,53 @@ def _needs_update(subject: str, conn) -> tuple[bool, int]:
 # ══════════════════════════════════════════════
 #  LLM 提炼
 # ══════════════════════════════════════════════
-def _extract_slang(subject: str, comments: list[str], llm: OpenAI) -> dict:
-    """调用 LLM 提炼黑话，返回 {fan:[...], hater:[...], neutral:[...]}"""
+def _extract_slang_batch(subject: str, comments: list[str], llm: OpenAI) -> dict:
+    """对单批评论调用 LLM 提炼黑话，返回 {fan:[...], hater:[...], neutral:[...]}"""
     comments_text = "\n".join(
         f"{i+1}. {c[:120]}" for i, c in enumerate(comments)
     )
     system = _SLANG_SYSTEM.format(subject=subject)
-    try:
-        resp = llm.chat.completions.create(
-            model=CONFIG["model"],
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": f"以下是关于【{subject}】的高赞评论：\n{comments_text}\n\n请提炼黑话："},
-            ],
-            temperature=0.3,
-            max_tokens=600,
-            timeout=CONFIG["llm_timeout"],
-        )
-        raw = resp.choices[0].message.content.strip()
-        raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
-        result = json.loads(raw)
-        return result
-    except Exception as e:
-        logger.warning(f"黑话提炼 LLM 失败（{subject}）: {e}")
-        return {"fan": [], "hater": [], "neutral": []}
+    resp = llm.chat.completions.create(
+        model=CONFIG["model"],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": f"以下是关于【{subject}】的高赞评论：\n{comments_text}\n\n请提炼黑话："},
+        ],
+        temperature=0.3,
+        max_tokens=1200,
+        timeout=CONFIG["llm_timeout"],
+    )
+    raw = resp.choices[0].message.content.strip()
+    raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+    return json.loads(raw)
+
+
+def _extract_slang(subject: str, comments: list[str], llm: OpenAI) -> dict:
+    """调用 LLM 提炼黑话，支持大 subject 分批合并，返回 {fan:[...], hater:[...], neutral:[...]}"""
+    merged = {"fan": [], "hater": [], "neutral": []}
+
+    # 分批处理，避免超出 max_tokens
+    for start in range(0, len(comments), BATCH_SIZE):
+        batch = comments[start: start + BATCH_SIZE]
+        try:
+            result = _extract_slang_batch(subject, batch, llm)
+            for stance in ("fan", "hater", "neutral"):
+                merged[stance].extend(result.get(stance, []))
+        except Exception as e:
+            logger.warning(f"黑话提炼 LLM 失败（{subject} batch {start//BATCH_SIZE+1}）: {e}")
+
+    # 去重：同一 term 只保留第一次出现
+    for stance in ("fan", "hater", "neutral"):
+        seen = set()
+        deduped = []
+        for item in merged[stance]:
+            term = str(item.get("term", "")).strip()
+            if term and term not in seen:
+                seen.add(term)
+                deduped.append(item)
+        merged[stance] = deduped
+
+    return merged
 
 
 # ══════════════════════════════════════════════
