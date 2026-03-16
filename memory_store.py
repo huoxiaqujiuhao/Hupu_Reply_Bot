@@ -41,6 +41,21 @@ def init_db():
         pass  # 已存在则忽略
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS SlangTerms (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject              TEXT NOT NULL,
+            term                 TEXT NOT NULL,
+            description          TEXT DEFAULT '',
+            stance               TEXT DEFAULT 'neutral',
+            vector               BLOB,
+            sparse_embedding     TEXT,
+            source_comment_count INTEGER DEFAULT 0,
+            updated_at           INTEGER DEFAULT 0,
+            UNIQUE(subject, term)
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS ReplyContext (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
             tid                INTEGER NOT NULL,
@@ -236,6 +251,59 @@ def get_reply_context(tid: int, content: str) -> dict | None:
 # ══════════════════════════════════════════════
 #  统计摘要
 # ══════════════════════════════════════════════
+def search_slang(
+    subject:    str,
+    query_text: str,
+    emb_model:  EmbeddingModel,
+    top_k:      int = 12,
+    stance:     str = None,   # None=全部, "fan"/"hater"/"neutral"
+) -> list[dict]:
+    """
+    按混合相似度检索某 subject 下最相关的黑话词汇。
+    返回 [{"term":..., "description":..., "stance":..., "similarity":...}, ...]
+    """
+    dense_mat, sparse_list = emb_model.encode_hybrid([query_text])
+    q_dense  = dense_mat[0]
+    q_sparse = sparse_list[0]
+
+    conn = sqlite3.connect(CONFIG["db_name"])
+    cur  = conn.cursor()
+    if stance:
+        cur.execute(
+            "SELECT term, description, stance, vector, sparse_embedding "
+            "FROM SlangTerms WHERE subject=? AND stance=?",
+            (subject, stance)
+        )
+    else:
+        cur.execute(
+            "SELECT term, description, stance, vector, sparse_embedding "
+            "FROM SlangTerms WHERE subject=?",
+            (subject,)
+        )
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    scored = []
+    for term, desc, st, blob, sparse_json in rows:
+        if blob is None:
+            continue
+        d_dense  = _from_blob(blob)
+        d_sparse = _sparse_from_json(sparse_json)
+        sim = _hybrid_sim(q_dense, d_dense, q_sparse, d_sparse)
+        scored.append({
+            "term":        term,
+            "description": desc or "",
+            "stance":      st,
+            "similarity":  sim,
+        })
+
+    scored.sort(key=lambda x: -x["similarity"])
+    return scored[:top_k]
+
+
 def print_stats():
     conn = sqlite3.connect(CONFIG["db_name"])
     cur  = conn.cursor()

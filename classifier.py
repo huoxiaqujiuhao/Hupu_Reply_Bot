@@ -56,6 +56,7 @@ def rebuild_centroids(emb_model: EmbeddingModel) -> dict[str, np.ndarray]:
         WHERE ai_tag IS NOT NULL
           AND ai_tag NOT LIKE 'ERROR%'
           AND ai_tag != 'other'
+          AND (section IS NULL OR section != 'basketball')
     """)
     rows = cur.fetchall()
     conn.close()
@@ -103,7 +104,11 @@ def classify_posts(emb_model: EmbeddingModel) -> int:
 
     conn = sqlite3.connect(CONFIG["db_name"])
     cur  = conn.cursor()
-    cur.execute("SELECT url, title, content FROM Posts WHERE ai_tag IS NULL")
+    cur.execute("""
+        SELECT url, title, content FROM Posts
+        WHERE ai_tag IS NULL
+          AND (section IS NULL OR section != 'basketball')
+    """)
     rows = cur.fetchall()
 
     if not rows:
