@@ -91,10 +91,25 @@ PARAM_META = {
     "memory_case_sim_threshold":  {"group": "反思系统", "label": "案例注入相似度门槛", "desc": "余弦相似度低于此值的案例不注入 Prompt（防止不相关案例乱入），建议 0.7~0.85", "type": "float"},
     "memory_content_max_chars":   {"group": "反思系统", "label": "ReplyContext 正文截断", "desc": "发帖时存储的帖子正文最多保存多少字", "type": "int"},
 
+    # ─── 篮球区参数 ────────────────────────────
+    "basketball_scan_interval":            {"group": "篮球区参数", "label": "后台扫描间隔（秒）",         "desc": "BballScanner 每隔多少秒匿名 HTTP 扫描一次列表页",                                  "type": "int"},
+    "basketball_tier1_min_posts":          {"group": "篮球区参数", "label": "T1 帖子数阈值",              "desc": "主体在数据库帖子数 ≥ 此值归 T1（詹姆斯/库里等顶级话题）",                         "type": "int"},
+    "basketball_tier2_min_posts":          {"group": "篮球区参数", "label": "T2 帖子数阈值",              "desc": "主体帖子数在 T2~T1 之间归 T2，其余归 T3",                                       "type": "int"},
+    "basketball_tier1_multiplier":         {"group": "篮球区参数", "label": "T1 优先级倍率",              "desc": "T1 主体的优先级乘数，score = tier × 1/(分钟+1)",                                 "type": "float"},
+    "basketball_tier2_multiplier":         {"group": "篮球区参数", "label": "T2 优先级倍率",              "desc": "T2 主体的优先级乘数",                                                            "type": "float"},
+    "basketball_tier3_multiplier":         {"group": "篮球区参数", "label": "T3 优先级倍率",              "desc": "T3（冷门）主体的优先级乘数",                                                     "type": "float"},
+    "basketball_age_cutoff_minutes":       {"group": "篮球区参数", "label": "帖子年龄截止（分钟）",       "desc": "进帖前确认帖子发出超过此时间则淘汰，不调 LLM",                                   "type": "int"},
+    "basketball_max_queue_per_scan":       {"group": "篮球区参数", "label": "每轮最多入队条数",           "desc": "每次扫描最多把多少条新帖放入优先队列",                                           "type": "int"},
+    "basketball_max_per_subject_per_scan": {"group": "篮球区参数", "label": "同主体每轮入队上限",         "desc": "同一主体（如詹姆斯）每轮扫描最多占几个队列坑位",                                 "type": "int"},
+    "basketball_subject_cooldown":         {"group": "篮球区参数", "label": "同主体冷却（秒）",           "desc": "回复过某主体后，多少秒内该主体的新帖跳过（防止短时间反复回同一话题）",            "type": "int"},
+    "basketball_slang_top_k":              {"group": "篮球区参数", "label": "黑话注入词汇数",             "desc": "生成回复时按相似度检索几条黑话词汇注入 Prompt",                                  "type": "int"},
+
     # ─── Prompt 模板 ────────────────────────────
-    "prompt_generate_system":  {"group": "Prompt 模板", "label": "回复生成：人设 + 风格规则", "desc": "rag_generate 的 system prompt 静态部分（成功案例自动追加在末尾）", "type": "textarea"},
-    "prompt_classify_system":  {"group": "Prompt 模板", "label": "帖子打分：评判标准", "desc": "classify_post 的评分准则（历史冷帖案例 + JSON格式要求自动追加）", "type": "textarea"},
-    "prompt_cluster_naming":   {"group": "Prompt 模板", "label": "聚类命名：指令", "desc": "给 other 重聚类后的新分类命名（含JSON输出格式，请勿删除）", "type": "textarea"},
+    "prompt_generate_system":              {"group": "Prompt 模板", "label": "回复生成：人设 + 风格规则",         "desc": "rag_generate 的 system prompt 静态部分（成功案例自动追加在末尾）",                    "type": "textarea"},
+    "prompt_classify_system":              {"group": "Prompt 模板", "label": "帖子打分：评判标准",               "desc": "classify_post 的评分准则（历史冷帖案例 + JSON格式要求自动追加）",                    "type": "textarea"},
+    "prompt_cluster_naming":               {"group": "Prompt 模板", "label": "聚类命名：指令",                   "desc": "给 other 重聚类后的新分类命名（含JSON输出格式，请勿删除）",                          "type": "textarea"},
+    "prompt_basketball_classify_system":   {"group": "Prompt 模板", "label": "篮球帖分类：LLM 指令",             "desc": "basketball_classify.py 的 system prompt，输出 [{id,subject,sentiment}] JSON",         "type": "textarea"},
+    "prompt_plan_system":                  {"group": "Prompt 模板", "label": "回复规划：策略专家指令",           "desc": "两步生成第一步（规划调用）的 system prompt，输出 {vibe,angle,hook} JSON",              "type": "textarea"},
 
     # ─── 防封节奏 ────────────────────────────
     "typing_delay_ms":      {"group": "防封节奏", "label": "打字延迟（毫秒/字）", "desc": "模拟人工打字的每字间隔，越大越安全但越慢", "type": "int"},
@@ -102,7 +117,7 @@ PARAM_META = {
 }
 
 # 分组排序
-GROUP_ORDER = ["API 设置", "时间控制", "爬虫参数", "分类参数", "回复参数", "RAG 参数", "反思系统", "Prompt 模板", "防封节奏"]
+GROUP_ORDER = ["API 设置", "时间控制", "爬虫参数", "分类参数", "回复参数", "RAG 参数", "反思系统", "篮球区参数", "Prompt 模板", "防封节奏"]
 
 
 # ══════════════════════════════════════════════
