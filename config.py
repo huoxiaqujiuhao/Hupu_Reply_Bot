@@ -138,6 +138,21 @@ CONFIG = {
     "memory_content_max_chars":   200,  # ReplyContext 存储的正文截断长度
 
     # ─────────────────────────────────────────────────────
+    #  🏀 篮球区实时回复参数
+    # ─────────────────────────────────────────────────────
+    "basketball_scan_interval":          30,    # 后台扫描间隔（秒）
+    "basketball_tier1_min_posts":        15,    # T1 阈值（帖子数 >= 此值）
+    "basketball_tier2_min_posts":        5,     # T2 阈值
+    "basketball_tier1_multiplier":       3.0,   # T1 优先级倍率
+    "basketball_tier2_multiplier":       1.8,   # T2 优先级倍率
+    "basketball_tier3_multiplier":       1.0,   # T3 优先级倍率
+    "basketball_age_cutoff_minutes":     3,     # 超过此时间（分钟）淘汰
+    "basketball_max_queue_per_scan":     3,     # 每轮扫描最多入队条数
+    "basketball_max_per_subject_per_scan": 2,   # 同主体每轮最多入队条数
+    "basketball_subject_cooldown":       300,   # 同主体冷却秒数（5 分钟）
+    "basketball_slang_top_k":            8,     # 黑话注入词汇数量
+
+    # ─────────────────────────────────────────────────────
     #  📝 Prompt 模板（可在图形界面编辑）
     # ─────────────────────────────────────────────────────
 
@@ -185,6 +200,23 @@ CONFIG = {
     "prompt_ref_weak_label":   "【历史同类高赞参考（只学语气节奏、黑话用法、断句习惯和大概评论结构和长度）】",
     "prompt_ref_strong_label": "【高度相似历史帖高赞评论（强约束：方向必须对齐这些评论，在此基础上做变体，不要照抄）】",
     "prompt_generate_suffix":  "请结合当前气氛，直接输出你的评论内容（不要任何前缀和解释）：",
+
+    # 篮球区帖子分类 prompt
+    "prompt_basketball_classify_system": (
+        "你是篮球内容分类专家。对每个帖子完成两件事：\n"
+        "1 识别主体（帖子的核心话题主角）：\n"
+        "   - 球员：用标准中文名（如詹姆斯、库里、科比，不用英文或绰号）\n"
+        "   - 球队：标准中文队名（如湖人、勇士、凯尔特人）\n"
+        "   - 教练：输出教练\n"
+        "   - 裁判：输出裁判\n"
+        "   - 联盟/赛制：输出联盟\n"
+        "   - 无法归类：输出other\n"
+        "2 判断情感倾向：\n"
+        "   positive = 高光/胜利/逆转/突破/称赞\n"
+        "   negative = 失利/争议/批评/黑料/下课\n"
+        "   neutral  = 数据分析/交易/常规讨论/赛程\n"
+        'JSON数组，不要任何前缀：[{"id":1,"subject":"詹姆斯","sentiment":"positive"},...]'
+    ),
 
     # rag_generate 第一步：规划调用（预测风向 + 制定角度）
     "prompt_plan_system": (

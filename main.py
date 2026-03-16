@@ -202,11 +202,17 @@ def main():
     import scraper as test_scraper
     import classifier
     import reply_bot
+    import basketball_reply
     import profile_scraper
     import memory_reviewer
 
     emb_model = EmbeddingModel(CONFIG["embedding_model"])
     llm       = OpenAI(api_key=CONFIG["api_key"], base_url=CONFIG["base_url"])
+
+    # 篮球区：构建 tier 表 + 启动后台扫描线程
+    basketball_reply.build_tier_map()
+    _bball_scanner = basketball_reply.BballScanner()
+    _bball_scanner.start()
     logger.info("✅ 初始化完成\n")
 
     # ── 启动前：刷新点赞 + 反思 ──────────────────────────
@@ -311,6 +317,12 @@ def main():
         reply_phase_start = time.time()
         try:
             vector_store = reply_bot.InMemoryVectorStore(CONFIG["db_name"], emb_model)
+
+            def bball_drain(page, replied_urls):
+                return basketball_reply.drain_bball_queue(
+                    page, replied_urls, emb_model, llm, vector_store
+                )
+
             reply_bot.auto_crawler(
                 deadline=reply_deadline,
                 cum_reply_secs_at_start=cum_reply_secs,
@@ -318,6 +330,7 @@ def main():
                 vector_store=vector_store,
                 emb_model=emb_model,
                 llm=llm,
+                bball_drain_fn=bball_drain,
             )
         except Exception as e:
             logger.error(f"回复出错: {e}", exc_info=True)

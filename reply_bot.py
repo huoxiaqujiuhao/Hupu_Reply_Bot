@@ -525,6 +525,7 @@ def run_scan_loop(
     vector_store, emb_model, llm,
     low_score_urls=None,
     watchlist=None,   # 差一点合格的帖子 URL，下轮优先复查
+    bball_drain_fn=None,  # fn(page, replied_urls) -> int，篮球打断检查
 ) -> int:
     if low_score_urls is None:
         low_score_urls = set()
@@ -665,8 +666,16 @@ def run_scan_loop(
         except Exception as e:
             logger.error(f"抓取出错: {e}", exc_info=True)
 
+        # 篮球打断检查：每处理完一个步行街帖，先消费篮球队列
+        if bball_drain_fn:
+            bball_count = bball_drain_fn(page, replied_urls)
+        else:
+            bball_count = 0
+
         if i < len(candidates) - 1:
-            random_sleep(CONFIG["reply_delay_posts"], "帖子间隔")
+            # 如果刚处理了篮球帖（自带间隔），跳过步行街间隔
+            if bball_count == 0:
+                random_sleep(CONFIG["reply_delay_posts"], "帖子间隔")
 
     return new_replies
 
@@ -681,6 +690,7 @@ def auto_crawler(
     vector_store: InMemoryVectorStore,
     emb_model: EmbeddingModel,
     llm: OpenAI,
+    bball_drain_fn=None,  # fn(page, replied_urls) -> int，传入后在每帖间检查篮球队列
 ):
     """
     deadline:                  本轮回复的截止时间戳
@@ -747,6 +757,7 @@ def auto_crawler(
                 vector_store=vector_store, emb_model=emb_model, llm=llm,
                 low_score_urls=low_score_urls,
                 watchlist=watchlist,
+                bball_drain_fn=bball_drain_fn,
             )
             replied_count += new
 
@@ -780,6 +791,7 @@ def auto_crawler(
                 is_panic_fn=lambda: True,   # 急行军阶段始终是急行军
                 deadline=deadline,
                 vector_store=vector_store, emb_model=emb_model, llm=llm,
+                bball_drain_fn=bball_drain_fn,
             )
 
     elapsed = (time.time() - phase_start) / 60
