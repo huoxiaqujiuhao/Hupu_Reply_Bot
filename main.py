@@ -13,8 +13,10 @@ main.py — 一键启动总控台
       panic_ratio=0.75 → 前30min从容，最后10min急行军。
 ════════════════════════════════════════
 """
-import time
 import os
+os.environ["HF_HOME"] = "E:/models/huggingface"
+
+import time
 import socket
 import subprocess
 import sqlite3

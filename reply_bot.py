@@ -322,8 +322,16 @@ def rag_generate(
                 if p["similarity"] >= CONFIG["memory_case_sim_threshold"]]
     comments = fetch_top_comments([p["url"] for p in similar])
 
+    # gap-based 强约束判断：top-1 比 top-2 高出 0.10+ → 强匹配
+    strong_ref = False
+    if len(similar) >= 2:
+        strong_ref = (similar[0]["similarity"] - similar[1]["similarity"]) >= 0.10
+    elif len(similar) == 1:
+        strong_ref = similar[0]["similarity"] >= 0.88
+
     if similar:
-        logger.info(f"最相似帖：《{similar[0]['title'][:25]}》 相似度 {similar[0]['similarity']:.3f}")
+        logger.info(f"最相似帖：《{similar[0]['title'][:25]}》 相似度 {similar[0]['similarity']:.3f}"
+                    f"{'（强约束）' if strong_ref else ''}")
     else:
         logger.info("无高相似度历史帖，跳过 ref_block")
     logger.info(f"参考高赞评论：{len(comments)} 条")
@@ -366,7 +374,7 @@ def rag_generate(
         f"【标题】{title}\n"
         f"【正文】{(content or '')[:CONFIG['post_prompt_max_chars']]}\n\n"
         f"【当前评论风向（决定你的立场和情绪，必须顺势而为）】\n{current_vibe_block}\n\n"
-        f"【历史同类高赞参考（只学语气节奏、黑话用法、断句习惯和大概评论结构和长度）】\n{ref_block}\n\n"
+        f"{'【高度相似历史帖高赞评论（强约束：方向必须对齐这些评论，在此基础上做变体，不要照抄）】' if strong_ref else '【历史同类高赞参考（只学语气节奏、黑话用法、断句习惯和大概评论结构和长度）】'}\n{ref_block}\n\n"
         "请结合当前气氛，直接输出你的评论内容（不要任何前缀和解释）："
     )
     resp = llm.chat.completions.create(
@@ -442,6 +450,7 @@ def run_scan_loop(
     deadline,
     vector_store, emb_model, llm,
     low_score_urls=None,
+    watchlist=None,   # 差一点合格的帖子 URL，下轮优先复查
 ) -> int:
     if low_score_urls is None:
         low_score_urls = set()
@@ -500,7 +509,15 @@ def run_scan_loop(
                     status_msg = "🔥 极品坑位，AI 质检"
                     need_reply = True
                 else:
-                    status_msg = "⏳ 坑位条件不符，跳过"
+                    # 回复数差一点但时间窗口内 → 加入候选池，下轮复查
+                    if (watchlist is not None
+                            and rc < CONFIG["calm_min_replies"]
+                            and rc >= max(0, CONFIG["calm_min_replies"] - 2)
+                            and minutes_ago <= CONFIG["calm_max_minutes"]):
+                        watchlist.add(url)
+                        status_msg = f"⏳ 回复数不足（{rc}），加入候选池等待成熟"
+                    else:
+                        status_msg = "⏳ 坑位条件不符，跳过"
             else:
                 if minutes_ago < CONFIG["too_fresh_minutes"]:
                     status_msg = "⏳ 太新，让子弹飞"
@@ -508,7 +525,9 @@ def run_scan_loop(
                     status_msg = "🔥 黄金时段，直冲"
                     need_reply = True
                 elif minutes_ago <= CONFIG["panic_scavenge_max"]:
-                    if rc > CONFIG["panic_reply_cap"]:
+                    if rc < CONFIG["panic_scavenge_min"]:
+                        status_msg = f"⏭️ 捡漏时段回复数不足（<{CONFIG['panic_scavenge_min']}评）"
+                    elif rc > CONFIG["panic_reply_cap"]:
                         status_msg = f"⏭️ 坑位已满（>{CONFIG['panic_reply_cap']}评）"
                     else:
                         status_msg = "🎯 捡漏，入场"
@@ -616,6 +635,7 @@ def auto_crawler(
         # ── 从容扫描（直到 deadline、配额满、或切入急行军）──────
         calm_round     = 1
         low_score_urls = set()
+        watchlist      = set()   # 差一点合格、等待成熟的帖子 URL
 
         while time.time() < deadline and replied_count < CONFIG["max_reply_actions"]:
             if is_panic_fn():
@@ -626,8 +646,15 @@ def auto_crawler(
                         f"剩余时间: {(deadline - time.time())/60:.1f}min")
 
             candidates = collect_candidate_urls(page, label=f"从容#{calm_round}")
-            fresh = [c for c in candidates if c["url"] not in replied_urls]
-            logger.info(f"新鲜候选: {len(fresh)} 个")
+
+            # 候选池里的帖子优先插到队列最前面（直接复查，不依赖列表页）
+            watchlist_pending = [{"url": u} for u in watchlist
+                                 if u not in replied_urls]
+            if watchlist_pending:
+                logger.info(f"候选池复查: {len(watchlist_pending)} 个帖子")
+
+            fresh = watchlist_pending + [c for c in candidates if c["url"] not in replied_urls]
+            logger.info(f"新鲜候选: {len(fresh)} 个（含候选池 {len(watchlist_pending)} 个）")
 
             if not fresh:
                 wait = min(CONFIG["calm_rescan_interval"],
@@ -645,6 +672,7 @@ def auto_crawler(
                 deadline=deadline,
                 vector_store=vector_store, emb_model=emb_model, llm=llm,
                 low_score_urls=low_score_urls,
+                watchlist=watchlist,
             )
             replied_count += new
 

@@ -79,6 +79,7 @@ CONFIG = {
     # 急行军模式
     "panic_golden_max":    30,   # 黄金时段：发帖在此分钟以内
     "panic_scavenge_max":  300,  # 捡漏时段上限（分钟）
+    "panic_scavenge_min":  3,    # 捡漏时段回复数下限（避免回复无人问津的帖）
     "panic_reply_cap":     25,   # 捡漏时段评论数上限
 
     # 死帖判定
@@ -131,6 +132,7 @@ CONFIG = {
     "memory_top_k_cases":         3,    # 注入 rag_generate 的正样本案例数量
     "memory_top_k_filter":        3,    # 注入筛帖 Prompt 的冷帖案例数量
     "memory_case_sim_threshold":  0.75, # 案例注入的最低余弦相似度（低于此值不注入）
+    "memory_duplicate_threshold": 0.82, # bot回复与高赞评论相似度超此值 → negative_duplicate
     "memory_content_max_chars":   200,  # ReplyContext 存储的正文截断长度
 
     # ─────────────────────────────────────────────────────

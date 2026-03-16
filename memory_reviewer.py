@@ -54,10 +54,22 @@ def _fetch_post_data(tid: int, context) -> dict | None:
         data   = json.loads(m.group(1))
         detail = data["props"]["pageProps"]["detail"]
         thread = detail["thread"]
+
+        top_lights = []
+        for light in detail.get("lights", [])[:5]:
+            txt = re.sub(r'<[^>]+>', '', light.get("content", "")).strip()
+            if txt:
+                top_lights.append({
+                    "content":    txt,
+                    "likes":      light.get("allLightCount", 0),
+                    "created_at": light.get("createdAt", 0) // 1000,  # ms → s
+                })
+
         return {
             "title":         thread.get("title", ""),
             "content":       re.sub(r'<[^>]+>', '', thread.get("content", "")).strip(),
             "total_replies": detail["replies"]["count"],
+            "top_lights":    top_lights,
         }
     except Exception:
         return None
@@ -74,9 +86,48 @@ def _mark_reflected(pid, post_deleted=False):
 
 
 # ══════════════════════════════════════════════
+#  负样本诊断
+# ══════════════════════════════════════════════
+def _diagnose_negative(bot_reply: str, bot_ts: int, top_lights: list, emb_model) -> str:
+    """
+    对活帖低赞评论做因果诊断，返回 case_type：
+      negative_timing    — bot 比最高赞晚入场，时机问题
+      negative_duplicate — bot 比最高赞早，但内容高度相似（说了一样的话）
+      negative_content   — bot 比最高赞早，内容不同，纯内容输了
+    """
+    if not top_lights:
+        return "negative_content"
+
+    best = max(top_lights, key=lambda x: x["likes"])
+    best_ts = best["created_at"]
+
+    # 时机判断：bot 比最高赞晚超过 5 分钟
+    if best_ts > 0 and bot_ts > 0 and bot_ts > best_ts + 300:
+        return "negative_timing"
+
+    # 内容相似度判断（bot 早于或同期，但内容相近）
+    try:
+        import numpy as np
+        vecs = emb_model.encode(
+            [bot_reply, best["content"]],
+            batch_size=2,
+            show_progress_bar=False,
+            normalize_embeddings=True,
+        )
+        sim = float(np.dot(vecs[0], vecs[1]))
+        threshold = CONFIG.get("memory_duplicate_threshold", 0.82)
+        if sim >= threshold:
+            return "negative_duplicate"
+    except Exception:
+        pass
+
+    return "negative_content"
+
+
+# ══════════════════════════════════════════════
 #  处理单条评论
 # ══════════════════════════════════════════════
-def _process_one(pid, tid, content, light_count, emb_model, context):
+def _process_one(pid, tid, content, light_count, bot_ts, emb_model, context):
     # 中间地带直接跳过
     if NEGATIVE_THRESHOLD < light_count < POSITIVE_THRESHOLD:
         _mark_reflected(pid)
@@ -89,16 +140,18 @@ def _process_one(pid, tid, content, light_count, emb_model, context):
     post_category = ctx["post_category"]      if ctx else None
     post_total    = ctx["post_total_replies"] if ctx else None
 
-    # 如果没有预存，实时抓帖
+    # 如果没有预存，实时抓帖（同时需要 top_lights，所以都走实时路径）
     post_deleted = False
-    if post_total is None:
-        live_data = _fetch_post_data(tid, context)
-        if live_data is None:
+    top_lights   = []
+    live_data = _fetch_post_data(tid, context)
+    if live_data is None:
+        if post_total is None:
             post_deleted = True
-        else:
-            post_total   = live_data["total_replies"]
-            post_title   = post_title   or live_data["title"]
-            post_content = post_content or live_data["content"]
+    else:
+        post_total   = post_total   or live_data["total_replies"]
+        post_title   = post_title   or live_data["title"]
+        post_content = post_content or live_data["content"]
+        top_lights   = live_data.get("top_lights", [])
 
     if post_deleted:
         _mark_reflected(pid, post_deleted=True)
@@ -138,7 +191,18 @@ def _process_one(pid, tid, content, light_count, emb_model, context):
             logger.info(f"  ⚠️ 死帖案例 {'[新增]' if inserted else '[已存在]'}: "
                         f"总回复={post_total} | {(post_title or '')[:30]}")
         else:
-            # 活帖但方向错
+            # 活帖低赞 — 诊断原因
+            case_type = _diagnose_negative(content, bot_ts, top_lights, emb_model)
+            best_light = max(top_lights, key=lambda x: x["likes"]) if top_lights else None
+            diag_note  = ""
+            if case_type == "negative_timing" and best_light:
+                delay_min = max(0, (bot_ts - best_light["created_at"]) // 60)
+                diag_note = f"晚{delay_min}min入场"
+            elif case_type == "negative_duplicate" and best_light:
+                diag_note = f"与高赞重复（{best_light['likes']}赞）"
+            elif case_type == "negative_content":
+                diag_note = "内容输了"
+
             inserted = memory_store.add_case(
                 tid=tid,
                 post_title=post_title or f"tid={tid}",
@@ -146,11 +210,11 @@ def _process_one(pid, tid, content, light_count, emb_model, context):
                 bot_reply=content,
                 light_count=light_count,
                 category=category,
-                case_type="negative_wrong",
+                case_type=case_type,
                 emb_model=emb_model,
             )
-            logger.info(f"  ⚠️ 方向错案例 {'[新增]' if inserted else '[已存在]'}: "
-                        f"赞={light_count} | {(post_title or '')[:30]}")
+            logger.info(f"  ⚠️ 负样本[{case_type}] {'[新增]' if inserted else '[已存在]'}: "
+                        f"{diag_note} | 赞={light_count} | {(post_title or '')[:25]}")
 
     _mark_reflected(pid)
 
@@ -165,7 +229,7 @@ def run(emb_model: EmbeddingModel, llm: OpenAI = None):
     conn = sqlite3.connect(CONFIG["db_name"])
     cur  = conn.cursor()
     cur.execute("""
-        SELECT pid, tid, content, light_count
+        SELECT pid, tid, content, light_count, created_at
         FROM BotComments
         WHERE reflected=0 AND created_at < ?
         ORDER BY created_at ASC
@@ -183,10 +247,10 @@ def run(emb_model: EmbeddingModel, llm: OpenAI = None):
         browser = p.chromium.connect_over_cdp("http://localhost:9222")
         context = browser.contexts[0]
 
-        for i, (pid, tid, content, light_count) in enumerate(pending):
+        for i, (pid, tid, content, light_count, bot_ts) in enumerate(pending):
             logger.info(f"  [{i+1}/{len(pending)}] pid={pid} light={light_count}")
             try:
-                _process_one(pid, tid, content, light_count, emb_model, context)
+                _process_one(pid, tid, content, light_count, bot_ts, emb_model, context)
             except Exception as e:
                 logger.error(f"  处理 pid={pid} 出错: {e}")
             time.sleep(0.5)
