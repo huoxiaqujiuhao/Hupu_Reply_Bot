@@ -24,8 +24,8 @@ import reply_bot
 logger = get_logger("BballReply")
 
 BBALL_SOURCES = [
-    "https://bbs.hupu.com/502",
-    "https://bbs.hupu.com/vote",
+    "https://bbs.hupu.com/502-postdate",
+    "https://bbs.hupu.com/vote-postdate",
 ]
 
 _HTTP_HEADERS = {
@@ -116,46 +116,88 @@ def _extract_subject(title: str, url: str):
 #  Anonymous HTTP list fetch
 # ══════════════════════════════════════════════
 def _fetch_list(source_url: str) -> list[dict]:
+    """
+    Supports two page formats:
+    - Next.js (__NEXT_DATA__ JSON): bbs.hupu.com/502, /vote
+    - Old HTML (bbs-sl-web-post-body li): bbs.hupu.com/502-postdate, /vote-postdate
+    """
     try:
         resp = requests.get(source_url, headers=_HTTP_HEADERS, timeout=10)
         resp.raise_for_status()
+
+        # Try Next.js format first
         m = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
             resp.text, re.DOTALL
         )
-        if not m:
-            return []
-        data    = json.loads(m.group(1))
-        threads = (data.get("props", {})
-                       .get("pageProps", {})
-                       .get("forumData", {})
-                       .get("threads", []))
+        if m:
+            data    = json.loads(m.group(1))
+            threads = (data.get("props", {})
+                           .get("pageProps", {})
+                           .get("forumData", {})
+                           .get("threads", []))
+            results = []
+            for t in threads:
+                tid = t.get("tid") or t.get("id")
+                if not tid:
+                    continue
+                url       = "https://bbs.hupu.com/{}.html".format(tid)
+                title     = t.get("subject") or t.get("title") or ""
+                post_time = t.get("createdAtFormat") or t.get("createTime") or ""
+                results.append({"url": url, "title": title, "post_time": post_time})
+            return results
+
+        # Old HTML format: parse <li class="bbs-sl-web-post-body"> blocks
         results = []
-        for t in threads:
-            tid = t.get("tid") or t.get("id")
-            if not tid:
+        blocks = re.findall(
+            r'<li class="bbs-sl-web-post-body">(.*?)</li>',
+            resp.text, re.DOTALL
+        )
+        for block in blocks:
+            href_m  = re.search(r'href="(/\d+\.html)"', block)
+            title_m = re.search(r'class="p-title"[^>]*>([^<]+)<', block)
+            time_m  = re.search(r'class="post-time">([^<]+)<', block)
+            if not href_m or not title_m:
                 continue
-            url        = "https://bbs.hupu.com/{}.html".format(tid)
-            title      = t.get("subject") or t.get("title") or ""
-            post_time  = t.get("createdAtFormat") or t.get("createTime") or ""
+            url   = "https://bbs.hupu.com" + href_m.group(1)
+            title = title_m.group(1).strip()
+            post_time = time_m.group(1).strip() if time_m else ""
             results.append({"url": url, "title": title, "post_time": post_time})
         return results
+
     except Exception as e:
         logger.warning("List fetch failed {}: {}".format(source_url, e))
         return []
 
 
 def _parse_minutes_ago(time_str: str) -> float:
+    """Parse hupu time string to minutes ago. Handles both relative and absolute formats."""
+    import datetime
     if not time_str:
         return 999.0
+    # Relative: 刚刚 / X秒前
     if "\u521a\u521a" in time_str or "\u79d2" in time_str:
         return 0.5
+    # Relative: X分钟前
     m = re.search(r'(\d+)\s*\u5206\u949f', time_str)
     if m:
         return float(m.group(1))
+    # Relative: X小时前
     m = re.search(r'(\d+)\s*\u5c0f\u65f6', time_str)
     if m:
         return float(m.group(1)) * 60
+    # Absolute: MM-DD HH:MM  (e.g. "03-17 05:43")
+    # Hupu server is UTC+8; compare against UTC+8 "now" to avoid timezone gaps
+    m = re.match(r'(\d{2})-(\d{2})\s+(\d{2}):(\d{2})', time_str)
+    if m:
+        import datetime as _dt
+        utc8_now = _dt.datetime.utcnow() + _dt.timedelta(hours=8)
+        month, day, hour, minute = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        post_dt = utc8_now.replace(month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0)
+        if post_dt > utc8_now + _dt.timedelta(minutes=5):  # clearly future → last year
+            post_dt = post_dt.replace(year=utc8_now.year - 1)
+        delta = (utc8_now - post_dt).total_seconds() / 60.0
+        return max(0.0, delta)
     return 999.0
 
 
