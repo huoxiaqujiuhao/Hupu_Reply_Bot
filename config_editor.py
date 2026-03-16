@@ -67,7 +67,6 @@ PARAM_META = {
     "dead_post_min_replies":{"group": "回复参数", "label": "死帖：最少回复数", "desc": "配合死帖最小发帖分钟使用，超时且回复少于此值则跳过", "type": "int"},
     "too_fresh_minutes":    {"group": "回复参数", "label": "太新：最短等待分钟", "desc": "急行军模式下，帖子发出不足此分钟则等子弹飞", "type": "int"},
     "list_pages":           {"group": "回复参数", "label": "列表页扫描页数", "desc": "每轮扫描论坛列表的页数，越多越全但越慢", "type": "int"},
-    "max_reply_actions":    {"group": "回复参数", "label": "每轮最多回复数", "desc": "每轮回复阶段最多发送的评论数量", "type": "int"},
 
     # ─── RAG 参数 ────────────────────────────
     "top_k_posts":           {"group": "RAG 参数", "label": "检索相似帖数量", "desc": "生成回复时从数据库检索最相似的 N 个历史帖", "type": "int"},
