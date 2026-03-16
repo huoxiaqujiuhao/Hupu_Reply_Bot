@@ -217,9 +217,7 @@ def auto_crawler(deadline: float = None, max_posts: int = None):
         harvested = cur.fetchone()[0]
         logger.info(f"📊 数据库已有 {harvested} 个帖子")
 
-        page_num = load_progress(conn)
-        if page_num > 1:
-            logger.info(f"🔁 断点续爬，从第 {page_num} 页继续")
+        page_num = 1
 
         consecutive_errors = 0
 
