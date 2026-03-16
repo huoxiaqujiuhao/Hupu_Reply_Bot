@@ -168,6 +168,24 @@ CONFIG = {
         '只输出JSON：{"primary":"...","secondary":"..."}'
     ),
 
+    # classify_post 的 JSON 格式要求（追加在 system prompt 末尾）
+    "prompt_classify_json_format": (
+        '\n必须只输出严格的 JSON：{"primary_category":"...","secondary_tag":"...","discussion_value":8}'
+    ),
+
+    # classify_post 里历史冷帖注入块的标题
+    "prompt_dead_case_header": (
+        "\n【历史冷帖案例——以下类型的帖子你曾回复后几乎没有获赞，说明帖子本身缺乏讨论热度，打分时酌情降低】\n"
+    ),
+
+    # rag_generate 里各注入块的标题
+    "prompt_pos_case_header":  "\n【你过去的成功评论案例（最相似话题，参考切入角度和语气，不要照抄）】\n",
+    "prompt_neg_case_header":  "\n【以下角度在高度相似帖子上失败过，避免走这个方向或换更有冲击力的表达】\n",
+    "prompt_vibe_label":       "【当前评论风向（决定你的立场和情绪，必须顺势而为）】",
+    "prompt_ref_weak_label":   "【历史同类高赞参考（只学语气节奏、黑话用法、断句习惯和大概评论结构和长度）】",
+    "prompt_ref_strong_label": "【高度相似历史帖高赞评论（强约束：方向必须对齐这些评论，在此基础上做变体，不要照抄）】",
+    "prompt_generate_suffix":  "请结合当前气氛，直接输出你的评论内容（不要任何前缀和解释）：",
+
     # ─────────────────────────────────────────────────────
     #  📁 路径（一般不用改）
     # ─────────────────────────────────────────────────────

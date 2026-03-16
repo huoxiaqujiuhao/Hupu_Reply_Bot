@@ -255,15 +255,12 @@ def classify_post(title: str, content: str, llm: OpenAI,
                     f"  {i+1}. 标题《{c['post_title'][:40]}》（相似度{c['similarity']:.2f}）"
                     for i, c in enumerate(dead_cases)
                 )
-                filter_block = (
-                    "\n【历史冷帖案例——以下类型的帖子你曾回复后几乎没有获赞，说明帖子本身缺乏讨论热度，打分时酌情降低】\n"
-                    + examples
-                )
+                filter_block = CONFIG["prompt_dead_case_header"] + examples
 
         system_prompt = (
             CONFIG["prompt_classify_system"]
             + filter_block
-            + '\n必须只输出严格的 JSON：{"primary_category":"...","secondary_tag":"...","discussion_value":8}'
+            + CONFIG["prompt_classify_json_format"]
         )
         resp = llm.chat.completions.create(
             model=CONFIG["model"],
@@ -388,10 +385,7 @@ def rag_generate(
                 f"- 帖子《{c['post_title'][:30]}》\n"
                 f"  你当时的评论：「{c['bot_reply'][:100]}」（获得 {c['light_count']} 赞）"
             )
-        memory_block += (
-            "\n【你过去的成功评论案例（最相似话题，参考切入角度和语气，不要照抄）】\n"
-            + "\n".join(case_lines)
-        )
+        memory_block += CONFIG["prompt_pos_case_header"] + "\n".join(case_lines)
     if deduped_neg:
         warn_lines = []
         for c in deduped_neg:
@@ -399,19 +393,16 @@ def rag_generate(
             warn_lines.append(
                 f"- 「{c['bot_reply'][:80]}」（{reason}，仅{c['light_count']}赞）"
             )
-        memory_block += (
-            "\n【以下角度在高度相似帖子上失败过，避免走这个方向或换更有冲击力的表达】\n"
-            + "\n".join(warn_lines)
-        )
+        memory_block += CONFIG["prompt_neg_case_header"] + "\n".join(warn_lines)
 
     system = CONFIG["prompt_generate_system"] + memory_block
     user = (
         f"【帖子类别】{ai_tag}\n"
         f"【标题】{title}\n"
         f"【正文】{(content or '')[:CONFIG['post_prompt_max_chars']]}\n\n"
-        f"【当前评论风向（决定你的立场和情绪，必须顺势而为）】\n{current_vibe_block}\n\n"
-        f"{'【高度相似历史帖高赞评论（强约束：方向必须对齐这些评论，在此基础上做变体，不要照抄）】' if strong_ref else '【历史同类高赞参考（只学语气节奏、黑话用法、断句习惯和大概评论结构和长度）】'}\n{ref_block}\n\n"
-        "请结合当前气氛，直接输出你的评论内容（不要任何前缀和解释）："
+        f"{CONFIG['prompt_vibe_label']}\n{current_vibe_block}\n\n"
+        f"{CONFIG['prompt_ref_strong_label'] if strong_ref else CONFIG['prompt_ref_weak_label']}\n{ref_block}\n\n"
+        + CONFIG["prompt_generate_suffix"]
     )
     resp = llm.chat.completions.create(
         model=CONFIG["model"],
