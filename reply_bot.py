@@ -304,6 +304,44 @@ def fetch_top_comments(urls: list[str]) -> list[dict]:
 
 
 
+def _plan_call(
+    title: str,
+    content: str,
+    ai_tag: str,
+    ref_block: str,
+    current_vibe_block: str,
+    neg_warn_block: str,
+    llm: OpenAI,
+) -> dict:
+    """第一步：预测风向 + 规划评论角度，返回 {vibe, angle, hook}。"""
+    user = (
+        f"【帖子类别】{ai_tag}\n"
+        f"【标题】{title}\n"
+        f"【正文】{(content or '')[:CONFIG['post_prompt_max_chars']]}\n\n"
+        f"【历史同类高赞评论（判断这类帖子什么方向容易火）】\n{ref_block}\n\n"
+        f"{CONFIG['prompt_vibe_label']}\n{current_vibe_block}\n\n"
+        + (f"【历史失败角度——必须回避】\n{neg_warn_block}\n\n" if neg_warn_block else "")
+        + CONFIG["prompt_plan_suffix"]
+    )
+    resp = llm.chat.completions.create(
+        model=CONFIG["model"],
+        messages=[
+            {"role": "system", "content": CONFIG["prompt_plan_system"]},
+            {"role": "user",   "content": user},
+        ],
+        temperature=CONFIG["classify_temperature"],
+        max_tokens=200,
+        timeout=CONFIG["llm_timeout"],
+    )
+    raw = resp.choices[0].message.content.strip()
+    try:
+        raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+        return json.loads(raw)
+    except Exception:
+        logger.warning(f"规划调用 JSON 解析失败，raw={raw[:80]}")
+        return {"vibe": "", "angle": "", "hook": ""}
+
+
 def rag_generate(
     title, content, ai_tag,
     vector_store: InMemoryVectorStore,
@@ -311,8 +349,8 @@ def rag_generate(
     llm: OpenAI,
     current_replies: list[str] = None,
 ) -> str:
-    query_text       = f"{title}。{(content or '')[:CONFIG['post_text_max_chars']]}"
-    dense_mat, sp    = emb_model.encode_hybrid([query_text])
+    query_text        = f"{title}。{(content or '')[:CONFIG['post_text_max_chars']]}"
+    dense_mat, sp     = emb_model.encode_hybrid([query_text])
     q_dense, q_sparse = dense_mat[0], sp[0]
 
     similar  = [p for p in vector_store.query(q_dense, q_sparse, ai_tag, CONFIG["top_k_posts"])
@@ -366,7 +404,6 @@ def rag_generate(
             top_k=CONFIG["memory_top_k_neg"],
         )
         neg_cases += [c for c in hits if c["similarity"] >= sim_threshold]
-    # 去重（同一条评论可能在两种类型里都出现），按相似度排序
     seen_replies = set()
     deduped_neg  = []
     for c in sorted(neg_cases, key=lambda x: -x["similarity"]):
@@ -377,31 +414,41 @@ def rag_generate(
         if len(deduped_neg) >= CONFIG["memory_top_k_neg_inject"]:
             break
 
+    # ── 第一步：规划调用 ────────────────────────────────
+    neg_warn_block = "\n".join([
+        f"- 「{c['bot_reply'][:80]}」（{'内容方向输了' if c['case_type'] == 'negative_content' else '和高赞重复且输了'}，仅{c['light_count']}赞）"
+        for c in deduped_neg
+    ]) if deduped_neg else ""
+
+    plan = _plan_call(title, content, ai_tag, ref_block, current_vibe_block, neg_warn_block, llm)
+    logger.info(f"规划：vibe={plan.get('vibe','')[:30]} | angle={plan.get('angle','')[:40]}")
+
+    # ── 第二步：生成调用 ────────────────────────────────
+    plan_block = ""
+    if plan.get("angle") or plan.get("hook"):
+        plan_block = (
+            f"{CONFIG['prompt_plan_block_header']}\n"
+            f"风向：{plan.get('vibe', '')}\n"
+            f"角度：{plan.get('angle', '')}\n"
+            f"开场钩子：{plan.get('hook', '')}\n\n"
+        )
+
     memory_block = ""
     if pos_cases:
-        case_lines = []
-        for c in pos_cases:
-            case_lines.append(
-                f"- 帖子《{c['post_title'][:30]}》\n"
-                f"  你当时的评论：「{c['bot_reply'][:100]}」（获得 {c['light_count']} 赞）"
-            )
+        case_lines = [
+            f"- 帖子《{c['post_title'][:30]}》\n"
+            f"  你当时的评论：「{c['bot_reply'][:100]}」（获得 {c['light_count']} 赞）"
+            for c in pos_cases
+        ]
         memory_block += CONFIG["prompt_pos_case_header"] + "\n".join(case_lines)
-    if deduped_neg:
-        warn_lines = []
-        for c in deduped_neg:
-            reason = "内容方向输了" if c["case_type"] == "negative_content" else "和高赞重复且输了"
-            warn_lines.append(
-                f"- 「{c['bot_reply'][:80]}」（{reason}，仅{c['light_count']}赞）"
-            )
-        memory_block += CONFIG["prompt_neg_case_header"] + "\n".join(warn_lines)
 
     system = CONFIG["prompt_generate_system"] + memory_block
     user = (
         f"【帖子类别】{ai_tag}\n"
         f"【标题】{title}\n"
         f"【正文】{(content or '')[:CONFIG['post_prompt_max_chars']]}\n\n"
-        f"{CONFIG['prompt_vibe_label']}\n{current_vibe_block}\n\n"
-        f"{CONFIG['prompt_ref_strong_label'] if strong_ref else CONFIG['prompt_ref_weak_label']}\n{ref_block}\n\n"
+        + plan_block
+        + f"{CONFIG['prompt_ref_strong_label'] if strong_ref else CONFIG['prompt_ref_weak_label']}\n{ref_block}\n\n"
         + CONFIG["prompt_generate_suffix"]
     )
     resp = llm.chat.completions.create(
