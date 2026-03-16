@@ -201,6 +201,28 @@ def index():
           </div>
         </div>'''
 
+    # ── 记事本标签页 ──────────────────────────────────
+    notes_content = ""
+    try:
+        with open("data/notes.md", encoding="utf-8") as _nf:
+            notes_content = _nf.read()
+    except FileNotFoundError:
+        pass
+    notes_escaped = _html.escape(notes_content)
+    notes_tab_id  = "tab-notes"
+    tabs_nav     += f'<button class="nav-link" data-bs-toggle="tab" data-bs-target="#{notes_tab_id}">📝 记事本</button>\n'
+    tabs_content += f'''
+    <div class="tab-pane fade" id="{notes_tab_id}">
+      <div class="mt-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="text-muted small">自由记录想做的功能、当前不满意的地方等，保存到 data/notes.md</span>
+          <button class="btn btn-success btn-sm" onclick="saveNotes()">💾 保存记事本</button>
+        </div>
+        <textarea id="notes-area" class="form-control font-monospace" rows="30"
+          style="font-size:0.88rem; white-space:pre; resize:vertical">{notes_escaped}</textarea>
+      </div>
+    </div>'''
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -271,6 +293,16 @@ function saveAll() {{
   .then(d => showToast(d.ok ? '✅ 已保存' : '❌ 保存失败: ' + d.error, d.ok ? 'success' : 'danger'));
 }}
 
+function saveNotes() {{
+  fetch('/notes_save', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{content: document.getElementById('notes-area').value}})
+  }})
+  .then(r => r.json())
+  .then(d => showToast(d.ok ? '✅ 记事本已保存' : '❌ 保存失败: ' + d.error, d.ok ? 'success' : 'danger'));
+}}
+
 function resetAll() {{
   if (!confirm('确认重置所有参数为默认值？')) return;
   fetch('/reset', {{method: 'POST'}})
@@ -315,6 +347,17 @@ def reset():
     try:
         if os.path.exists(OVERRIDES_FILE):
             os.remove(OVERRIDES_FILE)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/notes_save", methods=["POST"])
+def notes_save():
+    try:
+        content = request.get_json().get("content", "")
+        with open("data/notes.md", "w", encoding="utf-8") as f:
+            f.write(content)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
