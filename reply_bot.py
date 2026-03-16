@@ -480,7 +480,11 @@ def real_reply_action(page, reply_text: str) -> bool:
         editor.click()
         time.sleep(random.uniform(*CONFIG["post_click_pause"]))
 
-        editor.press_sequentially(reply_text, delay=CONFIG["typing_delay_ms"])
+        # ProseMirror 编辑器用逐字符输入会触发双重事件导致乱码，改用剪贴板粘贴
+        import json as _json
+        page.evaluate(f"navigator.clipboard.writeText({_json.dumps(reply_text)})")
+        page.keyboard.press("Control+a")
+        page.keyboard.press("Control+v")
         time.sleep(random.uniform(*CONFIG["post_type_pause"]))
 
         send_selectors = [
