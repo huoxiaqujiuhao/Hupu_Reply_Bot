@@ -690,7 +690,8 @@ def auto_crawler(
     vector_store: InMemoryVectorStore,
     emb_model: EmbeddingModel,
     llm: OpenAI,
-    bball_drain_fn=None,  # fn(page, replied_urls) -> int，传入后在每帖间检查篮球队列
+    bball_drain_fn=None,   # fn(page, replied_urls) -> int，传入后在每帖间检查篮球队列
+    replied_urls_init=None,  # 从爬虫阶段继承的已回复集合
 ):
     """
     deadline:                  本轮回复的截止时间戳
@@ -699,6 +700,8 @@ def auto_crawler(
     """
     phase_start = time.time()
     replied_urls  = load_replied_history()
+    if replied_urls_init:
+        replied_urls.update(replied_urls_init)
     replied_count = 0
     logger.info(f"已加载历史去重记录：{len(replied_urls)} 个 URL")
 

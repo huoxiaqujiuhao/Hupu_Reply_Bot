@@ -255,15 +255,29 @@ def main():
                     f"累计回复: {cum_reply_secs/60:.1f}/{total_reply_budget/60:.1f} min")
         logger.info(f"{'='*65}")
 
+        # 本轮共享的已回复 URL 集合（爬虫和回复两阶段都用）
+        cycle_replied_urls: set = set()
+
         # ────────────────────────────────────────────
-        #  阶段一：爬虫
+        #  阶段一：爬虫（同时消费篮球队列）
         # ────────────────────────────────────────────
         scrape_budget   = min(CONFIG["scrape_minutes"] * 60, remaining)
         scrape_deadline = time.time() + scrape_budget
 
         logger.info(f"\n🕷️  【爬虫阶段】时长 {scrape_budget/60:.0f} 分钟")
         try:
-            test_scraper.auto_crawler(deadline=scrape_deadline)
+            vector_store_scrape = reply_bot.InMemoryVectorStore(CONFIG["db_name"], emb_model)
+
+            def bball_drain_scrape(page, replied_urls):
+                return basketball_reply.drain_bball_queue(
+                    page, replied_urls, emb_model, llm, vector_store_scrape
+                )
+
+            test_scraper.auto_crawler(
+                deadline=scrape_deadline,
+                bball_drain_fn=bball_drain_scrape,
+                replied_urls=cycle_replied_urls,
+            )
         except Exception as e:
             logger.error(f"爬虫出错: {e}", exc_info=True)
 
@@ -331,6 +345,7 @@ def main():
                 emb_model=emb_model,
                 llm=llm,
                 bball_drain_fn=bball_drain,
+                replied_urls_init=cycle_replied_urls,
             )
         except Exception as e:
             logger.error(f"回复出错: {e}", exc_info=True)

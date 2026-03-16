@@ -200,9 +200,12 @@ def parse_post(page, url: str) -> dict | None:
 #  deadline: 绝对时间戳，到点停止
 #           None = 只按 max_harvest_posts 控制（单独运行时）
 # ══════════════════════════════════════════════
-def auto_crawler(deadline: float = None, max_posts: int = None):
+def auto_crawler(deadline: float = None, max_posts: int = None,
+                 bball_drain_fn=None, replied_urls: set = None):
     if max_posts is None:
         max_posts = 999999  # 被 main.py 调用时不按数量限制，只按时间
+    if replied_urls is None:
+        replied_urls = set()
 
     logger.info("🤖 爬虫启动，连接浏览器...")
     conn = init_database()
@@ -332,7 +335,14 @@ def auto_crawler(deadline: float = None, max_posts: int = None):
                         random_sleep(CONFIG["scraper_delay_on_error"], "错误冷却")
                     continue
 
-                random_sleep(CONFIG["scraper_delay_posts"], "帖子间隔")
+                # 篮球绝对优先：每收录一帖后立即消费篮球队列
+                if bball_drain_fn:
+                    bball_count = bball_drain_fn(page, replied_urls)
+                else:
+                    bball_count = 0
+
+                if bball_count == 0:
+                    random_sleep(CONFIG["scraper_delay_posts"], "帖子间隔")
 
             if deadline and time.time() >= deadline:
                 break
