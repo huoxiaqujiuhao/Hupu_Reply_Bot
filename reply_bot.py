@@ -346,15 +346,40 @@ def rag_generate(
         if current_replies else "  （目前暂无回复）"
     )
 
-    pos_cases   = memory_store.search_cases(
-        query_text=f"{title}。{(content or '')[:200]}",
+    query_for_cases = f"{title}。{(content or '')[:200]}"
+    sim_threshold   = CONFIG["memory_case_sim_threshold"]
+
+    pos_cases = memory_store.search_cases(
+        query_text=query_for_cases,
         case_type="positive",
         emb_model=emb_model,
         category=ai_tag,
         top_k=CONFIG["memory_top_k_cases"],
     )
-    pos_cases = [c for c in pos_cases
-                 if c["similarity"] >= CONFIG["memory_case_sim_threshold"]]
+    pos_cases = [c for c in pos_cases if c["similarity"] >= sim_threshold]
+
+    # 负样本：内容方向失败 + 重复失败（timing 不注入，和内容质量无关）
+    neg_cases = []
+    for ct in ("negative_content", "negative_duplicate"):
+        hits = memory_store.search_cases(
+            query_text=query_for_cases,
+            case_type=ct,
+            emb_model=emb_model,
+            category=ai_tag,
+            top_k=CONFIG["memory_top_k_neg"],
+        )
+        neg_cases += [c for c in hits if c["similarity"] >= sim_threshold]
+    # 去重（同一条评论可能在两种类型里都出现），按相似度排序
+    seen_replies = set()
+    deduped_neg  = []
+    for c in sorted(neg_cases, key=lambda x: -x["similarity"]):
+        key = c["bot_reply"][:60]
+        if key not in seen_replies:
+            seen_replies.add(key)
+            deduped_neg.append(c)
+        if len(deduped_neg) >= CONFIG["memory_top_k_neg_inject"]:
+            break
+
     memory_block = ""
     if pos_cases:
         case_lines = []
@@ -363,9 +388,20 @@ def rag_generate(
                 f"- 帖子《{c['post_title'][:30]}》\n"
                 f"  你当时的评论：「{c['bot_reply'][:100]}」（获得 {c['light_count']} 赞）"
             )
-        memory_block = (
+        memory_block += (
             "\n【你过去的成功评论案例（最相似话题，参考切入角度和语气，不要照抄）】\n"
             + "\n".join(case_lines)
+        )
+    if deduped_neg:
+        warn_lines = []
+        for c in deduped_neg:
+            reason = "内容方向输了" if c["case_type"] == "negative_content" else "和高赞重复且输了"
+            warn_lines.append(
+                f"- 「{c['bot_reply'][:80]}」（{reason}，仅{c['light_count']}赞）"
+            )
+        memory_block += (
+            "\n【以下角度在高度相似帖子上失败过，避免走这个方向或换更有冲击力的表达】\n"
+            + "\n".join(warn_lines)
         )
 
     system = CONFIG["prompt_generate_system"] + memory_block

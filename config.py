@@ -130,6 +130,8 @@ CONFIG = {
     "reflect_cooldown_hours":     24,   # 发出不足此小时的评论不反思
 
     "memory_top_k_cases":         3,    # 注入 rag_generate 的正样本案例数量
+    "memory_top_k_neg":           2,    # 每种负样本类型检索数量
+    "memory_top_k_neg_inject":    3,    # 最终注入 prompt 的负样本上限
     "memory_top_k_filter":        3,    # 注入筛帖 Prompt 的冷帖案例数量
     "memory_case_sim_threshold":  0.75, # 案例注入的最低余弦相似度（低于此值不注入）
     "memory_duplicate_threshold": 0.82, # bot回复与高赞评论相似度超此值 → negative_duplicate
