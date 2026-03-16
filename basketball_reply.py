@@ -409,7 +409,7 @@ def bball_rag_generate(
         ]
         memory_block = CONFIG["prompt_pos_case_header"] + "\n".join(case_lines)
 
-    system = CONFIG["prompt_generate_system"] + memory_block
+    system = CONFIG["prompt_basketball_generate_system"] + memory_block
     user   = (
         "[category]{}\n[title]{}\n[content]{}\n\n".format(
             ai_tag, title, (content or "")[:CONFIG["post_prompt_max_chars"]]
