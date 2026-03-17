@@ -85,47 +85,46 @@ def _cdp_alive() -> bool:
 
 def ensure_chrome():
     """
-    确保 Chrome 以 CDP 模式运行。
-    - 若端口已开：直接复用（无需登录）
-    - 若未开：启动 Chrome，等用户确认登录后继续
+    确保 Chrome 以 CDP 模式运行，并确认已登录。
+    - 若端口已开：复用现有会话，但仍检查登录状态
+    - 若未开：启动 Chrome，检查登录状态
     Cookie 保存在 data/chrome_profile，登录一次永久有效。
     """
     if _cdp_alive():
         logger.info("✅ Chrome CDP 已就绪，复用现有会话")
-        return
+    else:
+        chrome_exe = None
+        for p in CHROME_PATHS:
+            if os.path.exists(p):
+                chrome_exe = p
+                break
 
-    chrome_exe = None
-    for p in CHROME_PATHS:
-        if os.path.exists(p):
-            chrome_exe = p
-            break
+        if not chrome_exe:
+            logger.error("❌ 未找到 Chrome，请手动启动并打开 CDP 端口后按回车")
+            input()
+            return
 
-    if not chrome_exe:
-        logger.error("❌ 未找到 Chrome，请手动启动并打开 CDP 端口后按回车")
-        input()
-        return
+        logger.info("🌐 启动 Chrome（专属 Profile，保留登录状态）...")
+        os.makedirs(CHROME_PROFILE, exist_ok=True)
+        subprocess.Popen([
+            chrome_exe,
+            f"--remote-debugging-port={CDP_PORT}",
+            f"--user-data-dir={CHROME_PROFILE}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "https://bbs.hupu.com",
+        ])
 
-    logger.info("🌐 启动 Chrome（专属 Profile，保留登录状态）...")
-    os.makedirs(CHROME_PROFILE, exist_ok=True)
-    subprocess.Popen([
-        chrome_exe,
-        f"--remote-debugging-port={CDP_PORT}",
-        f"--user-data-dir={CHROME_PROFILE}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "https://bbs.hupu.com",
-    ])
+        # 等 Chrome 启动
+        for _ in range(20):
+            if _cdp_alive():
+                break
+            time.sleep(0.5)
 
-    # 等 Chrome 启动
-    for _ in range(20):
-        if _cdp_alive():
-            break
-        time.sleep(0.5)
+        if not _cdp_alive():
+            logger.warning("Chrome 启动超时，请手动确认")
 
-    if not _cdp_alive():
-        logger.warning("Chrome 启动超时，请手动确认")
-
-    # 检查是否已登录（profile 有 Cookie 则跳过提示）
+    # 无论是复用还是新启动，都检查登录状态
     profile_cookies = os.path.join(CHROME_PROFILE, "Default", "Cookies")
     if os.path.exists(profile_cookies) and os.path.getsize(profile_cookies) > 10240:
         logger.info("✅ 检测到已保存的登录 Cookie，自动继续")
