@@ -732,7 +732,7 @@ def auto_crawler(
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp("http://localhost:9222")
         context = browser.contexts[0]
-        page    = context.pages[0]
+        page    = context.pages[0] if context.pages else context.new_page()
 
         # ── 从容扫描（直到 deadline、配额满、或切入急行军）──────
         calm_round     = 1

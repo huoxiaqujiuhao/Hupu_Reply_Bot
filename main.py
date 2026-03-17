@@ -222,6 +222,9 @@ def main():
             )
         except Exception as e:
             logger.error(f"爬虫出错: {e}", exc_info=True)
+            if "closed" in str(e).lower():
+                logger.error("Chrome 已关闭，程序终止")
+                raise SystemExit(1)
 
         elapsed = time.time() - program_start
         if total_seconds - elapsed <= 60:
@@ -291,6 +294,9 @@ def main():
             )
         except Exception as e:
             logger.error(f"回复出错: {e}", exc_info=True)
+            if "closed" in str(e).lower():
+                logger.error("Chrome 已关闭，程序终止")
+                raise SystemExit(1)
 
         # 累加本轮实际回复时长
         cum_reply_secs += (time.time() - reply_phase_start)
