@@ -105,6 +105,8 @@ def collect_candidate_urls(page, label="") -> list:
                             candidates.append({"url": full_url, "title": title})
         except Exception as e:
             logger.error(f"扫描失败: {e}")
+            if "closed" in str(e).lower():
+                raise RuntimeError("Chrome 已关闭，终止运行") from e
         if page_num < CONFIG["list_pages"]:
             random_sleep(CONFIG["reply_delay_pages"], "翻页间隔")
     logger.info(f"🎯 {tag}共发现 {len(candidates)} 个候选帖子")

@@ -250,6 +250,8 @@ def auto_crawler(deadline: float = None, max_posts: int = None,
                     break
                 except Exception as e:
                     logger.warning(f"列表页加载失败（第{attempt}次）: {e}")
+                    if "closed" in str(e).lower():
+                        raise RuntimeError("Chrome 已关闭，终止运行") from e
                     if attempt < CONFIG["max_page_retries"]:
                         random_sleep(CONFIG["scraper_delay_on_error"], "错误冷却")
                         try_recover_page(page)
