@@ -43,6 +43,7 @@ _bball_queue:     PriorityQueue  = PriorityQueue()   # (-score, ts, item_dict)
 _seen_bball_urls: set            = set()              # never re-queue same URL
 _subject_cooldown: dict          = {}                 # {subject: last_replied_ts}
 _state_lock:      threading.Lock = threading.Lock()
+_bball_vs                        = None               # basketball-only vector store
 
 
 # ══════════════════════════════════════════════
@@ -83,6 +84,29 @@ def build_tier_map():
             t1c, t2c, len(new_map) - t1c - t2c
         )
     )
+
+
+def build_bball_vector_store(emb_model) -> None:
+    """构建篮球区专属向量库（只含 section='basketball' 的帖子），存入模块全局。"""
+    global _bball_vs
+    _bball_vs = reply_bot.InMemoryVectorStore(
+        CONFIG["db_name"], emb_model,
+        tag_filter=_is_basketball_post,
+    )
+    logger.info("篮球向量库就绪：{} 篇".format(len(_bball_vs.urls)))
+
+
+def _is_basketball_post(ai_tag: str) -> bool:
+    """根据 section='basketball' 已无法在 tag_filter 里直接访问 DB，
+       用 _tier_map 做主过滤，兜底用常见篮球实体关键词。"""
+    if not ai_tag or '-' not in ai_tag:
+        return False
+    subject = ai_tag.rsplit('-', 1)[0]
+    if subject in _tier_map:
+        return True
+    # 常见篮球固定实体（tier_map 早期数据少时兜底）
+    _BBALL_FIXED = {"球员", "球队", "教练", "裁判", "联盟", "NBA", "CBA"}
+    return subject in _BBALL_FIXED
 
 
 def _get_tier(subject) -> float:
@@ -255,11 +279,14 @@ class BballScanner(threading.Thread):
 
         max_per_scan    = CONFIG["basketball_max_queue_per_scan"]
         max_per_subject = CONFIG["basketball_max_per_subject_per_scan"]
+        min_score       = CONFIG.get("basketball_min_score", 1.0)
         added           = 0
         subject_count: dict = {}
 
         with _state_lock:
             for score, post, subject in scored:
+                if score < min_score:
+                    break  # scored 已按分数降序，后面都不符合
                 if added >= max_per_scan:
                     break
                 url = post["url"]
@@ -308,37 +335,6 @@ def mark_subject_replied(subject):
 
 
 # ══════════════════════════════════════════════
-#  Slang injection
-# ══════════════════════════════════════════════
-def _build_slang_block(subject: str, query_text: str, emb_model: EmbeddingModel) -> str:
-    if not subject:
-        return ""
-    top_k = CONFIG.get("basketball_slang_top_k", 8)
-    terms = memory_store.search_slang(subject, query_text, emb_model, top_k=top_k)
-    if not terms:
-        return ""
-
-    by_stance: dict = {}
-    for t in terms:
-        by_stance.setdefault(t["stance"], []).append(t["term"])
-
-    lines  = ["[{}circle slang (pick naturally, not all required)]".format(subject)]
-    labels = {"fan": "fan", "hater": "hater", "neutral": "neutral"}
-    # Build Chinese label string without hardcoding Chinese in source
-    fan_label     = "\u652f\u6301\u8005\u7528\u8bed"   # 支持者用语
-    hater_label   = "\u9ed1\u5b50\u7528\u8bed"         # 黑子用语
-    neutral_label = "\u4e2d\u7acb\u7528\u8bed"         # 中立用语
-    stance_cfg = [("fan", fan_label), ("hater", hater_label), ("neutral", neutral_label)]
-
-    header = "[{}\u5708\u5b50\u9ed1\u8bdd\uff08\u6309\u60c5\u51b5\u81ea\u7136\u9009\u7528\uff0c\u4e0d\u5fc5\u5168\u7528\uff09]".format(subject)
-    lines  = [header]
-    for stance, label in stance_cfg:
-        if stance in by_stance:
-            lines.append("  {}: {}".format(label, "\u3001".join(by_stance[stance][:5])))
-    return "\n".join(lines)
-
-
-# ══════════════════════════════════════════════
 #  Basketball RAG generate
 # ══════════════════════════════════════════════
 def bball_rag_generate(
@@ -349,52 +345,43 @@ def bball_rag_generate(
     emb_model: EmbeddingModel,
     llm: OpenAI,
     current_replies: list = None,
-    vector_store=None,
 ) -> str:
     query_text = "{}.{}".format(title, (content or "")[:CONFIG["post_text_max_chars"]])
 
-    # Reference block from similar historical posts
-    ref_block  = "  (no similar historical comments)"
-    strong_ref = False
-    if vector_store is not None:
-        dense_mat, sp      = emb_model.encode_hybrid([query_text])
-        q_dense, q_sparse  = dense_mat[0], sp[0]
-        similar   = [p for p in vector_store.query(q_dense, q_sparse, ai_tag, CONFIG["top_k_posts"])
-                     if p["similarity"] >= CONFIG["memory_case_sim_threshold"]]
-        comments  = reply_bot.fetch_top_comments([p["url"] for p in similar])
-        if len(similar) >= 2:
-            strong_ref = (similar[0]["similarity"] - similar[1]["similarity"]) >= 0.10
-        elif len(similar) == 1:
-            strong_ref = similar[0]["similarity"] >= 0.88
+    # 从篮球专属向量库检索历史相似帖的高赞评论（只作语气/用词参考）
+    ref_block = "  (no similar historical comments)"
+    if _bball_vs is not None:
+        dense_mat, sp     = emb_model.encode_hybrid([query_text])
+        q_dense, q_sparse = dense_mat[0], sp[0]
+        similar  = [p for p in _bball_vs.query(q_dense, q_sparse, ai_tag, CONFIG["top_k_posts"])
+                    if p["similarity"] >= CONFIG["memory_case_sim_threshold"]]
+        comments = reply_bot.fetch_top_comments([p["url"] for p in similar])
         if comments:
             ref_block = "\n".join([
                 "  {}. [{}]({} likes)".format(
                     i + 1,
                     c["comment"][:CONFIG["comment_ref_max_chars"]],
-                    c["lights"]
+                    c["lights"],
                 )
                 for i, c in enumerate(comments)
             ])
 
-    # Positive cases
+    # 正/负样本（本账号历史回复反馈）
     query_for_cases = "{}.{}".format(title, (content or "")[:200])
-    sim_th = CONFIG["memory_case_sim_threshold"]
-    pos_cases = memory_store.search_cases(
+    sim_th    = CONFIG["memory_case_sim_threshold"]
+    pos_cases = [c for c in memory_store.search_cases(
         query_text=query_for_cases, case_type="positive",
         emb_model=emb_model, category=ai_tag,
         top_k=CONFIG["memory_top_k_cases"],
-    )
-    pos_cases = [c for c in pos_cases if c["similarity"] >= sim_th]
+    ) if c["similarity"] >= sim_th]
 
-    # Negative cases
     neg_cases = []
     for ct in ("negative_content", "negative_duplicate"):
-        hits = memory_store.search_cases(
+        neg_cases += [c for c in memory_store.search_cases(
             query_text=query_for_cases, case_type=ct,
             emb_model=emb_model, category=ai_tag,
             top_k=CONFIG["memory_top_k_neg"],
-        )
-        neg_cases += [c for c in hits if c["similarity"] >= sim_th]
+        ) if c["similarity"] >= sim_th]
     seen_r, deduped_neg = set(), []
     for c in sorted(neg_cases, key=lambda x: -x["similarity"]):
         k = c["bot_reply"][:60]
@@ -404,16 +391,12 @@ def bball_rag_generate(
         if len(deduped_neg) >= CONFIG["memory_top_k_neg_inject"]:
             break
 
-    # Current vibe
+    # 当前评论区风向（让 LLM 自己判断，不依赖历史）
     current_vibe_block = (
         "\n".join(["  - {}".format(r) for r in current_replies])
         if current_replies else "  (no replies yet)"
     )
 
-    # Slang block
-    slang_block = _build_slang_block(subject, query_text, emb_model)
-
-    # Negative warning
     neg_warn_block = "\n".join([
         "- [{}] ({}, {} likes)".format(
             c["bot_reply"][:80],
@@ -423,9 +406,13 @@ def bball_rag_generate(
         for c in deduped_neg
     ]) if deduped_neg else ""
 
-    # Step 1: plan call
+    # Step 1: plan call（只喂当前风向 + 帖子内容，不喂历史参考，防止历史带偏）
     plan = reply_bot._plan_call(
-        title, content, ai_tag, ref_block, current_vibe_block, neg_warn_block, llm
+        title, content, ai_tag,
+        ref_block="",               # 不给 plan 看历史，让它只从当前评论区判断
+        current_vibe_block=current_vibe_block,
+        neg_warn_block=neg_warn_block,
+        llm=llm,
     )
     logger.info("Plan: vibe={} | angle={}".format(
         plan.get("vibe", "")[:30], plan.get("angle", "")[:40]
@@ -456,12 +443,8 @@ def bball_rag_generate(
         "[category]{}\n[title]{}\n[content]{}\n\n".format(
             ai_tag, title, (content or "")[:CONFIG["post_prompt_max_chars"]]
         )
-        + ("{}\n\n".format(slang_block) if slang_block else "")
         + plan_block
-        + "{}\n{}\n\n".format(
-            CONFIG["prompt_ref_strong_label"] if strong_ref else CONFIG["prompt_ref_weak_label"],
-            ref_block,
-        )
+        + "{}\n{}\n\n".format(CONFIG["prompt_basketball_ref_label"], ref_block)
         + CONFIG["prompt_generate_suffix"]
     )
 
@@ -487,7 +470,6 @@ def process_bball_post(
     replied_urls: set,
     emb_model: EmbeddingModel,
     llm: OpenAI,
-    vector_store=None,
 ) -> bool:
     url     = item["url"]
     subject = item["subject"]
@@ -554,7 +536,6 @@ def process_bball_post(
             emb_model       = emb_model,
             llm             = llm,
             current_replies = post_data["current_replies"],
-            vector_store    = vector_store,
         )
 
         logger.info("[BBALL] reply: {}".format(reply_text))
@@ -592,7 +573,6 @@ def drain_bball_queue(
     replied_urls: set,
     emb_model: EmbeddingModel,
     llm: OpenAI,
-    vector_store=None,
 ) -> int:
     count = 0
     while True:
@@ -600,7 +580,7 @@ def drain_bball_queue(
             _, _, item = _bball_queue.get_nowait()
         except Empty:
             break
-        success = process_bball_post(page, item, replied_urls, emb_model, llm, vector_store)
+        success = process_bball_post(page, item, replied_urls, emb_model, llm)
         if success:
             count += 1
         if not _bball_queue.empty():

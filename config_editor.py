@@ -101,13 +101,14 @@ PARAM_META = {
     "basketball_max_queue_per_scan":       {"group": "篮球区参数", "label": "每轮最多入队条数",           "desc": "每次扫描最多把多少条新帖放入优先队列",                                           "type": "int"},
     "basketball_max_per_subject_per_scan": {"group": "篮球区参数", "label": "同主体每轮入队上限",         "desc": "同一主体（如詹姆斯）每轮扫描最多占几个队列坑位",                                 "type": "int"},
     "basketball_subject_cooldown":         {"group": "篮球区参数", "label": "同主体冷却（秒）",           "desc": "回复过某主体后，多少秒内该主体的新帖跳过（防止短时间反复回同一话题）",            "type": "int"},
-    "basketball_slang_top_k":              {"group": "篮球区参数", "label": "黑话注入词汇数",             "desc": "生成回复时按相似度检索几条黑话词汇注入 Prompt",                                  "type": "int"},
+    "basketball_min_score":               {"group": "篮球区参数", "label": "入队最低分",                  "desc": "score=tier×1/(分钟+1)，低于此值的帖子不入队。T1刚发=3.0，T1-2min=1.0，T3刚发=1.0", "type": "float"},
 
     # ─── Prompt 模板 ────────────────────────────
     "prompt_generate_system":              {"group": "Prompt 模板", "label": "回复生成：人设 + 风格规则",         "desc": "rag_generate 的 system prompt 静态部分（成功案例自动追加在末尾）",                    "type": "textarea"},
     "prompt_classify_system":              {"group": "Prompt 模板", "label": "帖子打分：评判标准",               "desc": "classify_post 的评分准则（历史冷帖案例 + JSON格式要求自动追加）",                    "type": "textarea"},
     "prompt_cluster_naming":               {"group": "Prompt 模板", "label": "聚类命名：指令",                   "desc": "给 other 重聚类后的新分类命名（含JSON输出格式，请勿删除）",                          "type": "textarea"},
-    "prompt_basketball_generate_system":   {"group": "Prompt 模板", "label": "篮球回复：人设 + 风格规则",         "desc": "篮球区专属 system prompt，强调球迷立场、口语化、篮球黑话，区别于步行街人设",           "type": "textarea"},
+    "prompt_basketball_generate_system":   {"group": "Prompt 模板", "label": "篮球回复：人设 + 风格规则",         "desc": "篮球区专属 system prompt，强调球迷立场、口语化，区别于步行街人设",                     "type": "textarea"},
+    "prompt_basketball_ref_label":         {"group": "Prompt 模板", "label": "篮球回复：历史参考标签",             "desc": "历史高赞评论块的标题，提示 LLM 只参考语气节奏，不参考具体球员/赛事内容",               "type": "str"},
     "prompt_basketball_classify_system":   {"group": "Prompt 模板", "label": "篮球帖分类：LLM 指令",             "desc": "basketball_classify.py 的 system prompt，输出 [{id,subject,sentiment}] JSON",         "type": "textarea"},
     "prompt_plan_system":                  {"group": "Prompt 模板", "label": "回复规划：策略专家指令",           "desc": "两步生成第一步（规划调用）的 system prompt，输出 {vibe,angle,hook} JSON",              "type": "textarea"},
 

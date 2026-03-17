@@ -159,7 +159,11 @@ def parse_post(page) -> dict | None:
 #  内存向量库
 # ══════════════════════════════════════════════
 class InMemoryVectorStore:
-    def __init__(self, db_name: str, emb_model: EmbeddingModel):
+    def __init__(self, db_name: str, emb_model: EmbeddingModel, tag_filter=None):
+        """
+        tag_filter: 可选 callable(ai_tag) -> bool，只加载返回 True 的帖子。
+                    None 表示加载全部（步行街使用）。
+        """
         self.urls, self.titles, self.ai_tags = [], [], []
         self.matrix      = None
         self.sparse_list = []          # list[dict]，与 urls 等长
@@ -174,6 +178,9 @@ class InMemoryVectorStore:
         """)
         rows = cur.fetchall()
         conn.close()
+
+        if tag_filter:
+            rows = [r for r in rows if tag_filter(r[3])]
 
         if not rows:
             logger.warning("向量库：数据库中没有已打标帖子")

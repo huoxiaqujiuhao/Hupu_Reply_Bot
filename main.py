@@ -10,7 +10,7 @@ main.py — 一键启动总控台
   整个 session 里回复时间是有预算的（total_reply_budget）。
   当累计回复时间 / 总预算 超过 panic_ratio 时，切换为急行军模式。
   例：2h session，每轮20min回复 → 总预算≈40min，
-      panic_ratio=0.75 → 前30min从容，最后10min急行军。
+      panic_ratio=0.75 → 前30min从容，最后10min急行军。 
 ════════════════════════════════════════
 """
 import os
@@ -209,8 +209,9 @@ def main():
     emb_model = EmbeddingModel(CONFIG["embedding_model"])
     llm       = OpenAI(api_key=CONFIG["api_key"], base_url=CONFIG["base_url"])
 
-    # 篮球区：构建 tier 表 + 启动后台扫描线程
+    # 篮球区：构建 tier 表 + 篮球专属向量库 + 启动后台扫描线程
     basketball_reply.build_tier_map()
+    basketball_reply.build_bball_vector_store(emb_model)
     _bball_scanner = basketball_reply.BballScanner()
     _bball_scanner.start()
     logger.info("✅ 初始化完成\n")
@@ -266,11 +267,9 @@ def main():
 
         logger.info(f"\n🕷️  【爬虫阶段】时长 {scrape_budget/60:.0f} 分钟")
         try:
-            vector_store_scrape = reply_bot.InMemoryVectorStore(CONFIG["db_name"], emb_model)
-
             def bball_drain_scrape(page, replied_urls):
                 return basketball_reply.drain_bball_queue(
-                    page, replied_urls, emb_model, llm, vector_store_scrape
+                    page, replied_urls, emb_model, llm
                 )
 
             test_scraper.auto_crawler(
@@ -334,7 +333,7 @@ def main():
 
             def bball_drain(page, replied_urls):
                 return basketball_reply.drain_bball_queue(
-                    page, replied_urls, emb_model, llm, vector_store
+                    page, replied_urls, emb_model, llm
                 )
 
             reply_bot.auto_crawler(
