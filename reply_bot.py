@@ -638,6 +638,10 @@ def run_scan_loop(
             else:
                 logger.info("  质检通过，准备开火")
 
+            # 在 LLM 调用前就写入 replied_urls，防止崩溃重启后重复发帖
+            replied_urls.add(url)
+            save_replied_history(replied_urls)
+
             reply_text = rag_generate(
                 post_data["title"], post_data["content"], ai_tag,
                 vector_store, emb_model, llm,
@@ -664,8 +668,6 @@ def run_scan_loop(
                     )
                 except Exception:
                     pass
-            replied_urls.add(url)
-            save_replied_history(replied_urls)
 
         except Exception as e:
             logger.error(f"抓取出错: {e}", exc_info=True)

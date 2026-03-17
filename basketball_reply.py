@@ -542,6 +542,10 @@ def process_bball_post(
             ai_tag, minutes_ago, post_data["total_replies"]
         ))
 
+        # 在 LLM 调用前就写入 replied_urls，防止崩溃重启后重复发帖
+        replied_urls.add(url)
+        reply_bot.save_replied_history(replied_urls)
+
         reply_text = bball_rag_generate(
             title           = post_data["title"],
             content         = post_data["content"],
@@ -556,8 +560,6 @@ def process_bball_post(
         logger.info("[BBALL] reply: {}".format(reply_text))
 
         success = reply_bot.real_reply_action(page, reply_text)
-        replied_urls.add(url)
-        reply_bot.save_replied_history(replied_urls)
 
         if success:
             mark_subject_replied(subject)
