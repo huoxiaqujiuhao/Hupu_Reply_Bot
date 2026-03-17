@@ -131,11 +131,13 @@ def ensure_chrome():
         logger.info("✅ 检测到已保存的登录 Cookie，自动继续")
         time.sleep(2)  # 给页面加载时间
     else:
-        print("\n" + "=" * 55)
-        print("  首次运行：请在弹出的 Chrome 窗口中登录虎扑")
-        print("  登录完成后，回到这里按回车继续 ↓")
-        print("=" * 55)
-        input()
+        print("\n" + "=" * 60)
+        print("  未检测到登录状态，程序已暂停，什么都不会运行。")
+        print()
+        print("  请在弹出的 Chrome 窗口中完成虎扑登录，")
+        print("  登录好了之后回来按回车，程序才会继续。")
+        print("=" * 60)
+        input("  > 登录完成后按回车：")
         logger.info("✅ 用户确认登录完成，继续启动")
 
 
